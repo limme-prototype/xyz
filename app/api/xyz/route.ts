@@ -26,6 +26,23 @@ interface ProviderItem {
   videoThumbnails?: ThumbnailItem[];
 }
 
+interface GoogleSearchItem {
+  id?: { videoId?: string };
+  snippet?: {
+    title?: string;
+    channelTitle?: string;
+    channelId?: string;
+    publishedAt?: string;
+    description?: string;
+  };
+}
+
+interface GoogleVideoItem {
+  id?: string;
+  contentDetails?: { duration?: string };
+  statistics?: { viewCount?: string };
+}
+
 const PROVIDER_BASES = [
   "https://invidious.f5.si",
   "https://inv.nadeko.net",
@@ -93,6 +110,7 @@ export async function GET(request: NextRequest) {
   const related = searchParams.get("related")?.trim();
   const query = searchParams.get("q")?.trim();
   const rawIdOrUrl = searchParams.get("id") ?? searchParams.get("url");
+  const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
 
   const apiKey = searchParams.get("key")?.trim() || process.env.XYZ_API_KEY;
 
@@ -224,9 +242,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const trendingType = page === 1 ? "Music" : page === 2 ? "Default" : "Gaming";
     for (const base of PROVIDER_BASES) {
       try {
-        const res = await fetch(`${base}/api/v1/trending?type=Music`, {
+        const res = await fetch(`${base}/api/v1/trending?type=${trendingType}`, {
           headers: SERVER_FETCH_HEADERS,
           signal: AbortSignal.timeout(4000),
         });
@@ -241,7 +260,12 @@ export async function GET(request: NextRequest) {
 
             if (videos.length > 0) {
               return NextResponse.json(
-                { results: videos, live: true },
+                {
+                  results: videos,
+                  live: true,
+                  page,
+                  hasMore: page < 4,
+                },
                 { headers: DEPLOYMENT_RESPONSE_HEADERS }
               );
             }
@@ -252,8 +276,17 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const pageSize = 10;
+    const startIndex = (page - 1) * pageSize;
+    const fallbackResults = XYZ_CATALOG_VIDEOS.slice(startIndex, startIndex + pageSize);
+
     return NextResponse.json(
-      { results: XYZ_CATALOG_VIDEOS, live: false },
+      {
+        results: fallbackResults,
+        live: false,
+        page,
+        hasMore: startIndex + pageSize < XYZ_CATALOG_VIDEOS.length,
+      },
       { headers: DEPLOYMENT_RESPONSE_HEADERS }
     );
   }
@@ -309,21 +342,62 @@ export async function GET(request: NextRequest) {
         });
         if (apiRes.ok) {
           const apiData = await apiRes.json();
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const liveVideos = (apiData.items || []).map((item: any) => ({
-            id: item.id.videoId,
-            title: item.snippet.title,
-            channel: item.snippet.channelTitle,
-            channelUrl: `https://www.youtube.com/channel/${item.snippet.channelId}`,
-            views: "Live Result",
-            uploadedAt: new Date(item.snippet.publishedAt).toLocaleDateString(),
-            duration: "Video",
-            category: "General",
-            thumbnailUrl: `/api/xyz?thumb=${item.id.videoId}`,
-            description: item.snippet.description || "",
-          }));
+          const rawItems = (apiData.items || []) as GoogleSearchItem[];
+          const items = rawItems.filter((item) => Boolean(item.id?.videoId));
+          const videoIds = items
+            .map((i) => i.id?.videoId)
+            .filter((id): id is string => Boolean(id))
+            .join(",");
+
+          const detailsMap = new Map<string, { duration?: string; views?: string }>();
+          if (videoIds) {
+            try {
+              const detailRes = await fetch(
+                `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,statistics&id=${videoIds}&key=${apiKey}`,
+                { headers: SERVER_FETCH_HEADERS, signal: AbortSignal.timeout(3500) }
+              );
+              if (detailRes.ok) {
+                const detailData = await detailRes.json();
+                const detailItems = (detailData.items || []) as GoogleVideoItem[];
+                for (const v of detailItems) {
+                  if (v.id) {
+                    detailsMap.set(v.id, {
+                      duration: parseDurationIso(v.contentDetails?.duration),
+                      views: v.statistics?.viewCount
+                        ? `${parseInt(v.statistics.viewCount, 10).toLocaleString()} views`
+                        : undefined,
+                    });
+                  }
+                }
+              }
+            } catch {
+              // ignore detail enrichment error
+            }
+          }
+
+          const liveVideos = items.map((item) => {
+            const vid = item.id?.videoId || "";
+            const det = detailsMap.get(vid);
+            return {
+              id: vid,
+              title: item.snippet?.title || "Video",
+              channel: item.snippet?.channelTitle || "Creator",
+              channelUrl: item.snippet?.channelId
+                ? `https://www.youtube.com/channel/${item.snippet.channelId}`
+                : "",
+              views: det?.views || "Google Result",
+              uploadedAt: item.snippet?.publishedAt
+                ? new Date(item.snippet.publishedAt).toLocaleDateString()
+                : "",
+              duration: det?.duration || "Video",
+              category: "General",
+              thumbnailUrl: `/api/xyz?thumb=${vid}`,
+              description: item.snippet?.description || "",
+            };
+          });
+
           return NextResponse.json(
-            { results: liveVideos, live: true },
+            { results: liveVideos, live: true, page, hasMore: Boolean(apiData.nextPageToken) },
             { headers: DEPLOYMENT_RESPONSE_HEADERS }
           );
         }
@@ -334,10 +408,13 @@ export async function GET(request: NextRequest) {
 
     for (const base of PROVIDER_BASES) {
       try {
-        const res = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}`, {
-          headers: SERVER_FETCH_HEADERS,
-          signal: AbortSignal.timeout(4500),
-        });
+        const res = await fetch(
+          `${base}/api/v1/search?q=${encodeURIComponent(query)}&page=${page}`,
+          {
+            headers: SERVER_FETCH_HEADERS,
+            signal: AbortSignal.timeout(4500),
+          }
+        );
 
         if (res.ok) {
           const data = await res.json();
@@ -353,7 +430,12 @@ export async function GET(request: NextRequest) {
 
             if (videos.length > 0) {
               return NextResponse.json(
-                { results: videos, live: true },
+                {
+                  results: videos,
+                  live: true,
+                  page,
+                  hasMore: videos.length >= 10,
+                },
                 { headers: DEPLOYMENT_RESPONSE_HEADERS }
               );
             }
@@ -365,18 +447,23 @@ export async function GET(request: NextRequest) {
     }
 
     const qLower = query.toLowerCase();
-    const results = XYZ_CATALOG_VIDEOS.filter(
+    const allMatched = XYZ_CATALOG_VIDEOS.filter(
       (video) =>
         video.title.toLowerCase().includes(qLower) ||
         video.channel.toLowerCase().includes(qLower) ||
         video.category.toLowerCase().includes(qLower) ||
         video.description.toLowerCase().includes(qLower)
     );
+    const pageSize = 10;
+    const startIndex = (page - 1) * pageSize;
+    const results = allMatched.slice(startIndex, startIndex + pageSize);
 
     return NextResponse.json(
       {
         results,
         live: false,
+        page,
+        hasMore: startIndex + pageSize < allMatched.length,
         hasApiKey: Boolean(apiKey),
       },
       { headers: DEPLOYMENT_RESPONSE_HEADERS }
@@ -402,78 +489,140 @@ export async function GET(request: NextRequest) {
   const videoId = parseResult.videoId;
   const known = XYZ_CATALOG_VIDEOS.find((v) => v.id === videoId);
 
+  // 1. Try YouTube oEmbed
   try {
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const embedRes = await fetch(
       `https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`,
       {
         headers: SERVER_FETCH_HEADERS,
-        signal: AbortSignal.timeout(4000),
+        signal: AbortSignal.timeout(3500),
       }
     );
 
-    if (!embedRes.ok) {
-      if (known) {
-        return NextResponse.json(
-          {
-            id: known.id,
-            title: known.title,
-            authorName: known.channel,
-            authorUrl: known.channelUrl,
-            thumbnailUrl: known.thumbnailUrl,
-            views: known.views,
-            uploadedAt: known.uploadedAt,
-            duration: known.duration,
-            description: known.description,
-          },
-          { headers: DEPLOYMENT_RESPONSE_HEADERS }
-        );
-      }
-      return NextResponse.json(
-        { error: "Video not found" },
-        { status: embedRes.status, headers: DEPLOYMENT_RESPONSE_HEADERS }
-      );
-    }
-
-    const data = await embedRes.json();
-
-    return NextResponse.json(
-      {
-        id: videoId,
-        title: data.title ?? known?.title ?? "Video",
-        authorName: data.author_name ?? known?.channel ?? "Creator",
-        authorUrl: data.author_url ?? known?.channelUrl ?? "",
-        thumbnailUrl: `/api/xyz?thumb=${videoId}`,
-        views: known?.views ?? "Featured",
-        uploadedAt: known?.uploadedAt ?? "",
-        duration: known?.duration ?? "Video",
-        description:
-          known?.description ??
-          `${data.title} by ${data.author_name}`,
-      },
-      { headers: DEPLOYMENT_RESPONSE_HEADERS }
-    );
-  } catch {
-    if (known) {
+    if (embedRes.ok) {
+      const data = await embedRes.json();
       return NextResponse.json(
         {
-          id: known.id,
-          title: known.title,
-          authorName: known.channel,
-          authorUrl: known.channelUrl,
-          thumbnailUrl: known.thumbnailUrl,
-          views: known.views,
-          uploadedAt: known.uploadedAt,
-          duration: known.duration,
-          description: known.description,
+          id: videoId,
+          title: data.title ?? known?.title ?? "Video",
+          authorName: data.author_name ?? known?.channel ?? "Creator",
+          authorUrl: data.author_url ?? known?.channelUrl ?? "",
+          thumbnailUrl: `/api/xyz?thumb=${videoId}`,
+          views: known?.views ?? "",
+          uploadedAt: known?.uploadedAt ?? "",
+          duration: known?.duration ?? "Video",
+          description:
+            known?.description ??
+            (data.title ? `${data.title} by ${data.author_name || "Creator"}` : ""),
         },
         { headers: DEPLOYMENT_RESPONSE_HEADERS }
       );
     }
+  } catch {
+    // continue to fallbacks below
+  }
 
+  // 2. Try Google API if key is present
+  if (apiKey) {
+    try {
+      const gRes = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${videoId}&key=${apiKey}`,
+        { headers: SERVER_FETCH_HEADERS, signal: AbortSignal.timeout(3500) }
+      );
+      if (gRes.ok) {
+        const gData = await gRes.json();
+        const item = gData.items?.[0];
+        if (item) {
+          return NextResponse.json(
+            {
+              id: videoId,
+              title: item.snippet?.title || "Video",
+              authorName: item.snippet?.channelTitle || "Creator",
+              authorUrl: item.snippet?.channelId
+                ? `https://www.youtube.com/channel/${item.snippet.channelId}`
+                : "",
+              thumbnailUrl: `/api/xyz?thumb=${videoId}`,
+              views: item.statistics?.viewCount
+                ? `${parseInt(item.statistics.viewCount, 10).toLocaleString()} views`
+                : "",
+              uploadedAt: item.snippet?.publishedAt
+                ? new Date(item.snippet.publishedAt).toLocaleDateString()
+                : "",
+              duration: parseDurationIso(item.contentDetails?.duration),
+              description: item.snippet?.description || "",
+            },
+            { headers: DEPLOYMENT_RESPONSE_HEADERS }
+          );
+        }
+      }
+    } catch {
+      // continue to next fallback
+    }
+  }
+
+  // 3. Try Invidious provider bases
+  for (const base of PROVIDER_BASES) {
+    try {
+      const pRes = await fetch(`${base}/api/v1/videos/${encodeURIComponent(videoId)}`, {
+        headers: SERVER_FETCH_HEADERS,
+        signal: AbortSignal.timeout(3000),
+      });
+      if (pRes.ok) {
+        const pData = await pRes.json();
+        if (pData?.title) {
+          return NextResponse.json(
+            {
+              id: videoId,
+              title: pData.title,
+              authorName: pData.author || "Creator",
+              authorUrl: pData.authorUrl ? `https://www.youtube.com${pData.authorUrl}` : "",
+              thumbnailUrl: `/api/xyz?thumb=${videoId}`,
+              views: pData.viewCountText || (pData.viewCount ? `${pData.viewCount} views` : ""),
+              uploadedAt: pData.publishedText || "",
+              duration: formatDuration(pData.lengthSeconds),
+              description: pData.description || "",
+            },
+            { headers: DEPLOYMENT_RESPONSE_HEADERS }
+          );
+        }
+      }
+    } catch {
+      // try next provider
+    }
+  }
+
+  // 4. Try known catalog video
+  if (known) {
     return NextResponse.json(
-      { error: "Failed to load video" },
-      { status: 502, headers: DEPLOYMENT_RESPONSE_HEADERS }
+      {
+        id: known.id,
+        title: known.title,
+        authorName: known.channel,
+        authorUrl: known.channelUrl,
+        thumbnailUrl: known.thumbnailUrl,
+        views: known.views,
+        uploadedAt: known.uploadedAt,
+        duration: known.duration,
+        description: known.description,
+      },
+      { headers: DEPLOYMENT_RESPONSE_HEADERS }
     );
   }
+
+  // 5. Safe graceful fallback response (Never error out on valid video IDs!)
+  return NextResponse.json(
+    {
+      id: videoId,
+      title: "YouTube Video",
+      authorName: "Creator",
+      authorUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      thumbnailUrl: `/api/xyz?thumb=${videoId}`,
+      views: "",
+      uploadedAt: "",
+      duration: "Video",
+      description: "",
+    },
+    { headers: DEPLOYMENT_RESPONSE_HEADERS }
+  );
 }
