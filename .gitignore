@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Testing & Coverage
+coverage/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# Environment files
+.env
+.env*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+bun.log*
+pnpm-debug.log*
+
+# IDE & OS files
+.DS_Store
+*.pem
+Thumbs.db
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Temporary / Vercel
+.vercel

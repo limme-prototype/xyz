@@ -1,41 +1,29 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
   DEFAULT_VIDEO_ID,
   XYZ_CATALOG_VIDEOS,
   XyzVideo,
   getXyzEmbedUrl,
-  getXyzWatchUrl,
+  parseHlsUrl,
   parseXyzUrl,
 } from "@/lib/xyz";
+import { VideoMeta } from "@/lib/types/player";
+import { useAudioKeepalive, ensureAudioContext } from "@/lib/hooks/use-audio-keepalive";
+import { useMediaSession } from "@/lib/hooks/use-media-session";
+import { useHotkeys } from "@/lib/hooks/use-hotkeys";
+import { useHls } from "@/lib/hooks/use-hls";
+import { preloadShaka, useShaka } from "@/lib/hooks/use-shaka";
+import { preconnect } from "react-dom";
+import { SiteHeader, type SiteHeaderHandle } from "./site-header";
+import { AmbientStage } from "./ambient-stage";
+import { VideoDetails } from "./video-details";
+import { ChipBar, SearchResults, UpNextList } from "./video-list";
+import { DEFAULT_SECTION_ID } from "@/lib/content/sections";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import {
-  Search,
-  X,
-  Settings2,
-  Copy,
-  Check,
-  Minimize2,
-  Maximize2,
-  SkipForward,
-  SkipBack,
-  Play,
-  Loader2,
-  ChevronDown,
-} from "lucide-react";
-
-interface VideoMeta {
-  id: string;
-  title: string;
-  authorName: string;
-  authorUrl: string;
-  thumbnailUrl: string;
-  duration: string;
-  description: string;
-}
+import { X } from "lucide-react";
 
 function getFallbackMeta(id: string): VideoMeta | null {
   const found = XYZ_CATALOG_VIDEOS.find((v) => v.id === id);
@@ -48,471 +36,599 @@ function getFallbackMeta(id: string): VideoMeta | null {
     thumbnailUrl: found.thumbnailUrl,
     duration: found.duration,
     description: found.description,
+    views: found.views,
+    uploadedAt: found.uploadedAt,
   };
 }
 
-// Web Audio Keep-Alive for continuous background tab playback
-let audioCtxInstance: AudioContext | null = null;
-let silentOscInstance: OscillatorNode | null = null;
-let silentGainInstance: GainNode | null = null;
+type PlaybackMode = "native" | "embed";
 
-function ensureAudioContext() {
-  if (typeof window === "undefined") return;
+const PLAYBACK_MODE_KEY = "xyz_playback_mode";
+const API_KEY_STORAGE = "xyz_api_key";
+const YOUTUBE_API_KEY = /^AIza[0-9A-Za-z_-]{35}$/;
+
+/** Set from settings; sent as a header (never in the URL) so the server can use the user's own quota. */
+let userApiKey = "";
+
+function apiHeaders(): HeadersInit | undefined {
+  return userApiKey ? { "x-youtube-api-key": userApiKey } : undefined;
+}
+
+interface SectionPage {
+  items: XyzVideo[];
+  nextPageToken: string | null;
+}
+
+async function fetchSection(id: string, pageToken?: string): Promise<SectionPage | null> {
+  const qs = pageToken ? `?pageToken=${encodeURIComponent(pageToken)}` : "";
   try {
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-
-    if (!audioCtxInstance) {
-      audioCtxInstance = new AudioCtx();
-    }
-
-    if (audioCtxInstance.state === "suspended") {
-      audioCtxInstance.resume().catch(() => {});
-    }
-
-    if (!silentOscInstance && audioCtxInstance.state === "running") {
-      silentGainInstance = audioCtxInstance.createGain();
-      silentGainInstance.gain.setValueAtTime(0.00001, audioCtxInstance.currentTime);
-
-      silentOscInstance = audioCtxInstance.createOscillator();
-      silentOscInstance.frequency.setValueAtTime(440, audioCtxInstance.currentTime);
-      silentOscInstance.connect(silentGainInstance);
-      silentGainInstance.connect(audioCtxInstance.destination);
-      silentOscInstance.start();
-    }
+    const res = await fetch(`/api/xyz/sections/${encodeURIComponent(id)}${qs}`);
+    const data = res.ok ? await res.json() : null;
+    return Array.isArray(data?.items) ? { items: data.items, nextPageToken: data.nextPageToken ?? null } : null;
   } catch {
-    // Ignore if audio context cannot be initialized without gesture
+    return null;
   }
 }
 
-export function XyzPlayer() {
-  const [activeVideoId, setActiveVideoId] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const v = params.get("v");
-      if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) return v;
-    }
-    return DEFAULT_VIDEO_ID;
-  });
-  const [inputVal, setInputVal] = useState<string>("");
-  const [meta, setMeta] = useState<VideoMeta | null>(() =>
-    getFallbackMeta(DEFAULT_VIDEO_ID)
-  );
-  const [error, setError] = useState<string>("");
+const MEDIA_ORIGINS_KEY = "xyz_media_origins";
 
-  // Search & autocomplete
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [selectedSuggestIndex, setSelectedSuggestIndex] = useState<number>(-1);
-  const [isSuggestOpen, setIsSuggestOpen] = useState(false);
-  const [searchResults, setSearchResults] = useState<XyzVideo[] | null>(null);
-  const [searchQueryLabel, setSearchQueryLabel] = useState<string>("");
-  const [searchPage, setSearchPage] = useState<number>(1);
-  const [hasMore, setHasMore] = useState<boolean>(true);
-  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
-  const [autoplay, setAutoplay] = useState(true);
-  const [isAutoplay, setIsAutoplay] = useState(true);
-  const [isMinimized, setIsMinimized] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [showFullDesc, setShowFullDesc] = useState(false);
+function manifestPath(id: string): string {
+  return `/api/xyz/manifest/${id}`;
+}
+
+/** Opens TLS connections to the media servers early; segments are the first thing fetched there. */
+function preconnectMedia(origins: unknown) {
+  if (!Array.isArray(origins)) return;
+  for (const origin of origins) {
+    if (typeof origin === "string" && /^https:\/\/[^/]+$/.test(origin)) preconnect(origin, { crossOrigin: "anonymous" });
+  }
+}
+
+function readSetting(key: string): string {
+  try {
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+async function fetchVideos(url: string): Promise<XyzVideo[] | null> {
+  try {
+    const res = await fetch(url, { headers: apiHeaders() });
+    const data = res.ok ? await res.json() : null;
+    return Array.isArray(data?.results) ? (data.results as XyzVideo[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+interface XyzPlayerProps {
+  initialVideoId?: string;
+}
+
+type View = { type: "watch" } | { type: "search"; query: string; results: XyzVideo[]; loading: boolean };
+
+export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID }: XyzPlayerProps) {
+  useAudioKeepalive();
+
+  // Consistent SSR & Client initial state using server-passed initialVideoId
+  const [activeVideoId, setActiveVideoId] = useState<string>(initialVideoId);
+  const [meta, setMeta] = useState<VideoMeta | null>(() => getFallbackMeta(initialVideoId));
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [isAutoplay, setIsAutoplay] = useState<boolean>(true);
+  const [isMinimized, setIsMinimized] = useState<boolean>(false);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [showSettings, setShowSettings] = useState<boolean>(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [origin] = useState<string>(() =>
-    typeof window !== "undefined" ? window.location.origin : ""
-  );
+  const [queue, setQueue] = useState<XyzVideo[]>(XYZ_CATALOG_VIDEOS);
+  const [activeChip, setActiveChip] = useState<string>(DEFAULT_SECTION_ID);
+  const [listLoading, setListLoading] = useState<boolean>(false);
+  const [listNextPage, setListNextPage] = useState<string | null>(null);
+  const [listLoadingMore, setListLoadingMore] = useState<boolean>(false);
+  const [view, setView] = useState<View>({ type: "watch" });
 
-  const initialEmbedIdRef = useRef(activeVideoId);
-  const iframeLoadedRef = useRef(false);
-  const initialEmbedUrl = useRef(
-    getXyzEmbedUrl(initialEmbedIdRef.current, true, origin)
-  ).current;
+  // Custom-controls playback state (fed by YouTube infoDelivery or <video> events)
+  const [streamUrl, setStreamUrl] = useState<string | null>(null);
+  const [hasStarted, setHasStarted] = useState<boolean>(false);
+  const [isBuffering, setIsBuffering] = useState<boolean>(false);
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
+  const [volume, setVolumeState] = useState<number>(100);
+  const [rate, setRateState] = useState<number>(1);
+  const [captionsOn, setCaptionsOn] = useState<boolean>(true);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
-  // Unlock AudioContext on first user interaction anywhere on page
-  useEffect(() => {
-    const unlockAudio = () => {
-      ensureAudioContext();
-      window.removeEventListener("pointerdown", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
-    };
-    window.addEventListener("pointerdown", unlockAudio, { passive: true });
-    window.addEventListener("keydown", unlockAudio, { passive: true });
-    return () => {
-      window.removeEventListener("pointerdown", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
-    };
-  }, []);
+  // Native (DASH via a proxying Invidious instance) is the default: it never contacts YouTube from the browser.
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("native");
+  const [dashUrls, setDashUrls] = useState<string[] | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
-  // Settings for custom API key
-  const [savedApiKey, setSavedApiKey] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    try {
-      return localStorage.getItem("xyz_api_key") || "";
-    } catch {
-      return "";
-    }
-  });
-  const [showSettings, setShowSettings] = useState(false);
-  const [tempApiKey, setTempApiKey] = useState("");
+  // Settings
+  const [tempPlaybackMode, setTempPlaybackMode] = useState<PlaybackMode>("native");
+  const [apiKey, setApiKey] = useState<string>("");
+  const [tempApiKey, setTempApiKey] = useState<string>("");
 
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<SiteHeaderHandle>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const lastEndedTriggerRef = useRef<number>(0);
-
-  // Keep refs updated to prevent stale closures in event listeners
-  const isAutoplayRef = useRef(isAutoplay);
-  useEffect(() => {
-    isAutoplayRef.current = isAutoplay;
-  }, [isAutoplay]);
-
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const activeVideoIdRef = useRef(activeVideoId);
+  const initialVideoIdRef = useRef(initialVideoId);
+  const isAutoplayRef = useRef(isAutoplay);
+  const videoActiveRef = useRef<boolean>(true);
+  const streamUrlStateRef = useRef<string | null>(null);
+  const playbackModeRef = useRef<PlaybackMode>("native");
+  const currentTimeRef = useRef<number>(0);
+  const lastEndedTriggerRef = useRef<number>(0);
+  const iframeLoadedRef = useRef<boolean>(false);
+  const listRequestRef = useRef(0);
+
   useEffect(() => {
     activeVideoIdRef.current = activeVideoId;
   }, [activeVideoId]);
 
-  const displayedVideos = searchResults ?? XYZ_CATALOG_VIDEOS;
-  const displayedVideosRef = useRef(displayedVideos);
   useEffect(() => {
-    displayedVideosRef.current = displayedVideos;
-  }, [displayedVideos]);
+    isAutoplayRef.current = isAutoplay;
+  }, [isAutoplay]);
 
-  function showToast(msg: string) {
-    setToast(msg);
-    setTimeout(() => setToast(null), 2200);
-  }
-
-  function sendIframeMessage(msg: Record<string, unknown>) {
-    try {
-      iframeRef.current?.contentWindow?.postMessage(JSON.stringify(msg), "*");
-    } catch {
-      // ignore
-    }
-  }
-
-  function sendPlayerCommand(func: string, args: unknown[] = []) {
-    sendIframeMessage({
-      event: "command",
-      func,
-      args,
-    });
-  }
-
-  function sendPlayerHandshake() {
-    sendIframeMessage({ event: "listening" });
-    sendPlayerCommand("addEventListener", ["onStateChange"]);
-    sendPlayerCommand("addEventListener", ["infoDelivery"]);
-  }
-
-  const sendPlayerCommandRef = useRef(sendPlayerCommand);
   useEffect(() => {
-    sendPlayerCommandRef.current = sendPlayerCommand;
-  });
+    streamUrlStateRef.current = streamUrl;
+  }, [streamUrl]);
 
-  const sendPlayerHandshakeRef = useRef(sendPlayerHandshake);
+  // The <video> element is the playback surface for HLS streams and for native (DASH) mode.
+  const videoActive = Boolean(streamUrl) || playbackMode === "native";
+
+  // The key only applies to the YouTube player; the built-in player never relies on Google.
   useEffect(() => {
-    sendPlayerHandshakeRef.current = sendPlayerHandshake;
-  });
+    userApiKey = playbackMode === "embed" ? apiKey : "";
+  }, [playbackMode, apiKey]);
 
-  function playNextVideo() {
-    ensureAudioContext();
-    const list = displayedVideosRef.current;
-    if (!list.length) return;
-    const currentIndex = list.findIndex((v) => v.id === activeVideoIdRef.current);
-    const nextIndex =
-      currentIndex >= 0 && currentIndex + 1 < list.length ? currentIndex + 1 : 0;
-    const nextVideo = list[nextIndex];
-    if (nextVideo) {
-      handleSelectVideo(nextVideo);
-      showToast(`Playing next: ${nextVideo.title}`);
-    }
-  }
-
-  const playNextVideoRef = useRef(playNextVideo);
   useEffect(() => {
-    playNextVideoRef.current = playNextVideo;
-  });
+    videoActiveRef.current = videoActive;
+    playbackModeRef.current = playbackMode;
+  }, [videoActive, playbackMode]);
 
-  function playPrevVideo() {
-    ensureAudioContext();
-    const list = displayedVideosRef.current;
-    if (!list.length) return;
-    const currentIndex = list.findIndex((v) => v.id === activeVideoIdRef.current);
-    const prevIndex =
-      currentIndex > 0 ? currentIndex - 1 : list.length - 1;
-    const prevVideo = list[prevIndex];
-    if (prevVideo) {
-      handleSelectVideo(prevVideo);
-      showToast(`Playing: ${prevVideo.title}`);
-    }
-  }
-
-  const playPrevVideoRef = useRef(playPrevVideo);
+  // Load persisted settings after hydration (server render always assumes native mode).
   useEffect(() => {
-    playPrevVideoRef.current = playPrevVideo;
-  });
-
-  function handleSelectVideo(video: XyzVideo) {
-    ensureAudioContext();
-    setActiveVideoId(video.id);
-    setMeta({
-      id: video.id,
-      title: video.title,
-      authorName: video.channel,
-      authorUrl: video.channelUrl,
-      thumbnailUrl: video.thumbnailUrl,
-      duration: video.duration,
-      description: video.description,
-    });
-    setError("");
-    setAutoplay(true);
-    setShowFullDesc(false);
-    setIsMinimized(false);
-
-    // Immediately load & play video in persistent player (no iframe destruction)
-    sendPlayerHandshake();
-    sendPlayerCommand("loadVideoById", [video.id, 0]);
-    sendPlayerCommand("playVideo");
-
-    // Multi-stage trigger to ensure playback starts smoothly even on slow networks
-    setTimeout(() => {
-      sendPlayerHandshake();
-      sendPlayerCommand("loadVideoById", [video.id, 0]);
-      sendPlayerCommand("playVideo");
-    }, 200);
-    setTimeout(() => {
-      sendPlayerCommand("playVideo");
-    }, 600);
-
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      url.searchParams.set("v", video.id);
-      window.history.replaceState({}, "", url.toString());
-      if (document.visibilityState === "visible") {
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
-    }
-  }
-
-  // Keyboard shortcut: '/' to focus search, 'Escape' to dismiss, 'm' to toggle minimize
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      const isInput = ["INPUT", "TEXTAREA"].includes(
-        document.activeElement?.tagName || ""
-      );
-
-      if (e.key === "/" && !isInput) {
-        e.preventDefault();
-        searchInputRef.current?.focus();
-      } else if (e.key === "Escape") {
-        if (isSuggestOpen) {
-          setIsSuggestOpen(false);
-          searchInputRef.current?.blur();
-        } else if (isMinimized) {
-          setIsMinimized(false);
-        }
-      } else if (e.key.toLowerCase() === "m" && !isInput) {
-        e.preventDefault();
-        setIsMinimized((prev) => !prev);
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isSuggestOpen, isMinimized]);
-
-  // Close suggestions when clicking outside
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (
-        searchContainerRef.current &&
-        !searchContainerRef.current.contains(e.target as Node)
-      ) {
-        setIsSuggestOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    const storedMode = readSetting(PLAYBACK_MODE_KEY);
+    const storedKey = readSetting(API_KEY_STORAGE);
+    const timer = setTimeout(() => {
+      if (storedMode === "embed") setPlaybackMode("embed");
+      if (YOUTUBE_API_KEY.test(storedKey)) setApiKey(storedKey);
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
-  // Autocomplete debounce
   useEffect(() => {
-    const trimmed = inputVal.trim();
-    if (trimmed.length < 2 || trimmed.startsWith("http")) {
-      return;
-    }
+    currentTimeRef.current = currentTime;
+  }, [currentTime]);
 
-    const timer = setTimeout(() => {
-      fetch(`/api/xyz?suggest=${encodeURIComponent(trimmed)}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (data?.suggestions?.length) {
-            setSuggestions(data.suggestions);
-            setIsSuggestOpen(true);
-          } else {
-            setSuggestions([]);
-            setIsSuggestOpen(false);
-          }
-        })
-        .catch(() => {
-          setSuggestions([]);
-        });
-    }, 200);
-
-    return () => clearTimeout(timer);
-  }, [inputVal]);
-
-  // Load video metadata
+  // Track fullscreen changes (Esc, double-click, button)
   useEffect(() => {
-    let ignore = false;
+    const onChange = () => setIsFullscreen(document.fullscreenElement === stageRef.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
 
-    fetch(`/api/xyz?id=${activeVideoId}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: VideoMeta | null) => {
-        if (!ignore && data?.title) {
-          setMeta(data);
-          setError("");
-        }
-      })
-      .catch(() => {
-        if (!ignore) {
-          const fallback =
-            getFallbackMeta(activeVideoId) ||
-            displayedVideosRef.current.find((v) => v.id === activeVideoId);
-          if (fallback) {
-            setMeta({
-              id: fallback.id,
-              title: fallback.title,
-              authorName:
-                "authorName" in fallback
-                  ? (fallback as VideoMeta).authorName
-                  : (fallback as XyzVideo).channel || "Creator",
-              authorUrl:
-                "authorUrl" in fallback
-                  ? (fallback as VideoMeta).authorUrl
-                  : (fallback as XyzVideo).channelUrl || "",
-              thumbnailUrl: fallback.thumbnailUrl,
-              duration: fallback.duration || "Video",
-              description: fallback.description || "",
-            });
-          }
-        }
-      });
+  // Must be identical on server and client to avoid a hydration mismatch (no window access here).
+  const [initialEmbedUrl] = useState(() => getXyzEmbedUrl(initialVideoId, false));
 
-    return () => {
-      ignore = true;
-    };
-  }, [activeVideoId]);
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2500);
+  }, []);
 
-  // Load live recommendations dynamically for the current track
-  useEffect(() => {
-    let ignore = false;
-
-    if (!searchQueryLabel) {
-      fetch(`/api/xyz?related=${activeVideoId}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (!ignore && data?.results?.length) {
-            setSearchResults(data.results);
-          }
-        })
-        .catch(() => {});
-    }
-
-    return () => {
-      ignore = true;
-    };
-  }, [activeVideoId, searchQueryLabel]);
-
-  // MediaSession API for OS background controls (taskbar, lock screen, keyboard multimedia keys)
-  useEffect(() => {
-    if (typeof window === "undefined" || !("mediaSession" in navigator)) return;
-
+  const sendPlayerCommand = useCallback((func: string, args: unknown[] = []) => {
     try {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: meta?.title || "xyz Player",
-        artist: meta?.authorName || "xyz",
-        album: "xyz Player",
-        artwork: [
-          {
-            src: meta?.thumbnailUrl || `/api/xyz?thumb=${activeVideoId}`,
-            sizes: "512x512",
-            type: "image/jpeg",
-          },
-          {
-            src: `https://i.ytimg.com/vi/${activeVideoId}/hqdefault.jpg`,
-            sizes: "480x360",
-            type: "image/jpeg",
-          },
-        ],
-      });
-
-      navigator.mediaSession.setActionHandler("play", () => {
-        sendPlayerCommandRef.current("playVideo");
-        try {
-          navigator.mediaSession.playbackState = "playing";
-        } catch {}
-      });
-
-      navigator.mediaSession.setActionHandler("pause", () => {
-        sendPlayerCommandRef.current("pauseVideo");
-        try {
-          navigator.mediaSession.playbackState = "paused";
-        } catch {}
-      });
-
-      navigator.mediaSession.setActionHandler("nexttrack", () => {
-        playNextVideoRef.current();
-      });
-
-      navigator.mediaSession.setActionHandler("previoustrack", () => {
-        playPrevVideoRef.current();
-      });
-
-      navigator.mediaSession.setActionHandler("seekto", (details) => {
-        if (details.seekTime !== undefined) {
-          sendPlayerCommandRef.current("seekTo", [details.seekTime, true]);
-        }
-      });
+      iframeRef.current?.contentWindow?.postMessage(
+        JSON.stringify({ event: "command", func, args }),
+        "*"
+      );
     } catch {
       // ignore
     }
-  }, [meta, activeVideoId]);
+  }, []);
 
-  // Synchronize browser tab title like YouTube
+  const sendPlayerHandshake = useCallback(() => {
+    try {
+      iframeRef.current?.contentWindow?.postMessage(
+        JSON.stringify({ event: "listening" }),
+        "*"
+      );
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Unified playback engine: routes to the <video> element when it is active, otherwise YouTube.
+  const engine = useMemo(
+    () => ({
+      play: () => {
+        ensureAudioContext();
+        if (videoActiveRef.current) videoRef.current?.play().catch(() => {});
+        else sendPlayerCommand("playVideo");
+      },
+      pause: () => {
+        if (videoActiveRef.current) videoRef.current?.pause();
+        else sendPlayerCommand("pauseVideo");
+      },
+      seekTo: (seconds: number) => {
+        const target = Math.max(0, seconds);
+        if (videoActiveRef.current) {
+          if (videoRef.current) videoRef.current.currentTime = target;
+        } else {
+          sendPlayerCommand("seekTo", [target, true]);
+        }
+        setCurrentTime(target);
+      },
+      setVolume: (value: number) => {
+        if (videoActiveRef.current) {
+          if (videoRef.current) videoRef.current.volume = value / 100;
+        } else {
+          sendPlayerCommand("setVolume", [value]);
+        }
+      },
+      setMuted: (muted: boolean) => {
+        if (videoActiveRef.current) {
+          if (videoRef.current) videoRef.current.muted = muted;
+        } else {
+          sendPlayerCommand(muted ? "mute" : "unMute");
+        }
+      },
+      setRate: (value: number) => {
+        if (videoActiveRef.current) {
+          if (videoRef.current) videoRef.current.playbackRate = value;
+        } else {
+          sendPlayerCommand("setPlaybackRate", [value]);
+        }
+      },
+      setCaptions: (on: boolean) => {
+        if (videoActiveRef.current) {
+          const tracks = videoRef.current?.textTracks;
+          if (tracks) {
+            for (let i = 0; i < tracks.length; i++) tracks[i].mode = on ? "showing" : "hidden";
+          }
+        } else {
+          sendPlayerCommand(on ? "loadModule" : "unloadModule", ["captions"]);
+        }
+      },
+    }),
+    [sendPlayerCommand]
+  );
+
+  const resetPlaybackState = useCallback(() => {
+    setCurrentTime(0);
+    setDuration(0);
+    setHasStarted(false);
+    setIsBuffering(false);
+    setPlaybackError(null);
+  }, []);
+
+  /** Resolves DASH manifests for a video from the healthy public instances. */
+  const loadNativeSources = useCallback((id: string) => {
+    // One request: the server picks a working instance and returns the validated manifest
+    // (CDN-cached), so the player starts without a separate "find sources" round trip.
+    setIsBuffering(true);
+    setDashUrls([manifestPath(id)]);
+  }, []);
+
+  const loadMeta = useCallback((id: string) => {
+    fetch(`/api/xyz?id=${id}`, { headers: apiHeaders() })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data || data.error || activeVideoIdRef.current !== id) return;
+        setMeta((prev) => ({
+          id: data.id || id,
+          title: data.title,
+          authorName: data.authorName ?? data.channel,
+          authorUrl: data.authorUrl ?? data.channelUrl,
+          thumbnailUrl: data.thumbnailUrl,
+          duration: data.duration,
+          description: data.description || prev?.description || "",
+          views: data.views || prev?.views,
+          uploadedAt: data.uploadedAt || prev?.uploadedAt,
+        }));
+      })
+      .catch(() => {});
+  }, []);
+
+  // Details for the first video (server render only knows catalog entries).
+  useEffect(() => {
+    loadMeta(initialVideoIdRef.current);
+  }, [loadMeta]);
+
+  const playVideoById = useCallback(
+    (id: string, known?: XyzVideo) => {
+      ensureAudioContext();
+      setActiveVideoId(id);
+      activeVideoIdRef.current = id;
+      setStreamUrl(null);
+      resetPlaybackState();
+
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.set("v", id);
+        window.history.replaceState({}, "", url.toString());
+      }
+
+      // Show what we already know immediately (from the list item), then refine.
+      const fb = getFallbackMeta(id);
+      setMeta(
+        fb ??
+          (known
+            ? {
+                id,
+                title: known.title,
+                authorName: known.channel,
+                authorUrl: known.channelUrl,
+                thumbnailUrl: known.thumbnailUrl,
+                duration: known.duration,
+                description: known.description,
+                views: known.views,
+                uploadedAt: known.uploadedAt,
+              }
+            : null)
+      );
+      loadMeta(id);
+
+      if (playbackModeRef.current === "native") {
+        loadNativeSources(id);
+      } else if (iframeLoadedRef.current) {
+        sendPlayerCommand("loadVideoById", [id, 0]);
+        sendPlayerCommand("unMute");
+        setIsMuted(false);
+        if (isAutoplayRef.current) {
+          sendPlayerCommand("playVideo");
+          setIsPlaying(true);
+        }
+      }
+    },
+    [sendPlayerCommand, resetPlaybackState, loadNativeSources, loadMeta]
+  );
+
+  // Play a self-hosted HLS (.m3u8) stream through hls.js
+  const playStream = useCallback(
+    (url: string) => {
+      ensureAudioContext();
+      sendPlayerCommand("pauseVideo");
+      resetPlaybackState();
+      setIsPlaying(false);
+      setDashUrls(null);
+      setStreamUrl(url);
+      let title = url;
+      let host = "";
+      try {
+        const parsed = new URL(url);
+        host = parsed.host;
+        title = decodeURIComponent(parsed.pathname.split("/").filter(Boolean).slice(-2, -1)[0] ?? parsed.pathname);
+      } catch {}
+      setMeta({
+        id: url,
+        title: title || "HLS stream",
+        authorName: host || "Stream",
+        authorUrl: url,
+        thumbnailUrl: "",
+        duration: "",
+        description: "",
+      });
+    },
+    [sendPlayerCommand, resetPlaybackState]
+  );
+
+  useHls(videoRef, streamUrl, showToast);
+
+  const onNativeError = useCallback((message: string) => {
+    setIsPlaying(false);
+    setIsBuffering(false);
+    setPlaybackError(message);
+  }, []);
+  const onNativeRecovered = useCallback(() => setPlaybackError(null), []);
+  const shaka = useShaka(videoRef, streamUrl ? null : dashUrls, {
+    autoplay: isAutoplay,
+    onError: onNativeError,
+    onRecovered: onNativeRecovered,
+  });
+
+  const retryPlayback = useCallback(() => {
+    setPlaybackError(null);
+    if (dashUrls) shaka.retry();
+    else loadNativeSources(activeVideoIdRef.current);
+  }, [dashUrls, shaka, loadNativeSources]);
+
+  // Entering native mode (initial load or settings change) resolves sources for the current video;
+  // leaving it hands playback back to the iframe.
+  useEffect(() => {
+    if (streamUrlStateRef.current) return;
+    const timer = setTimeout(() => {
+      if (playbackMode === "native") loadNativeSources(activeVideoIdRef.current);
+      else setDashUrls(null);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [playbackMode, loadNativeSources]);
+
+  // Read URL search params safely on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const v = params.get("v");
+    if (v && /^[A-Za-z0-9_-]{11}$/.test(v) && v !== initialVideoId) {
+      const timer = setTimeout(() => {
+        playVideoById(v);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [playVideoById, initialVideoId]);
+
+  // Warm-up on load: Shaka's chunk, and connections to the media servers (last known first).
+  useEffect(() => {
+    try {
+      preconnectMedia(JSON.parse(readSetting(MEDIA_ORIGINS_KEY) || "[]"));
+    } catch {}
+    const timer = setTimeout(() => {
+      void preloadShaka();
+      fetch("/api/xyz/instances")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          preconnectMedia(data?.mediaOrigins);
+          if (Array.isArray(data?.mediaOrigins)) localStorage.setItem(MEDIA_ORIGINS_KEY, JSON.stringify(data.mediaOrigins));
+        })
+        .catch(() => {});
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Once a video is playing, quietly fetch the next one's manifest so skipping ahead starts fast
+  // (it warms the CDN, and the browser may reuse it for a few minutes).
+  useEffect(() => {
+    if (!hasStarted || playbackMode !== "native" || streamUrl) return;
+    const index = queue.findIndex((v) => v.id === activeVideoId);
+    const next = queue[index >= 0 && index < queue.length - 1 ? index + 1 : 0];
+    if (!next || next.id === activeVideoId) return;
+    const timer = setTimeout(() => {
+      fetch(manifestPath(next.id), { priority: "low" }).catch(() => {});
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [hasStarted, playbackMode, streamUrl, queue, activeVideoId]);
+
+  const playNextVideo = useCallback(() => {
+    const currentIndex = queue.findIndex((v) => v.id === activeVideoIdRef.current);
+    const nextIndex = currentIndex >= 0 && currentIndex < queue.length - 1 ? currentIndex + 1 : 0;
+    const nextVideo = queue[nextIndex];
+    if (nextVideo) playVideoById(nextVideo.id, nextVideo);
+  }, [queue, playVideoById]);
+
+  const playPrevVideo = useCallback(() => {
+    const currentIndex = queue.findIndex((v) => v.id === activeVideoIdRef.current);
+    const prevIndex = currentIndex > 0 ? currentIndex - 1 : queue.length - 1;
+    const prevVideo = queue[prevIndex];
+    if (prevVideo) playVideoById(prevVideo.id, prevVideo);
+  }, [queue, playVideoById]);
+
+  const togglePlay = useCallback(() => {
+    if (isPlaying) {
+      engine.pause();
+      setIsPlaying(false);
+    } else {
+      if (isMuted && !videoActiveRef.current) {
+        engine.setMuted(false);
+        setIsMuted(false);
+      }
+      engine.play();
+      setIsPlaying(true);
+    }
+  }, [isPlaying, isMuted, engine]);
+
+  const toggleMute = useCallback(() => {
+    engine.setMuted(!isMuted);
+    setIsMuted(!isMuted);
+  }, [isMuted, engine]);
+
+  const changeVolume = useCallback(
+    (value: number) => {
+      engine.setVolume(value);
+      setVolumeState(value);
+      if (value > 0 && isMuted) {
+        engine.setMuted(false);
+        setIsMuted(false);
+      }
+    },
+    [engine, isMuted]
+  );
+
+  const changeRate = useCallback(
+    (value: number) => {
+      engine.setRate(value);
+      setRateState(value);
+    },
+    [engine]
+  );
+
+  const toggleCaptions = useCallback(() => {
+    engine.setCaptions(!captionsOn);
+    setCaptionsOn(!captionsOn);
+    showToast(captionsOn ? "Captions off" : "Captions on");
+  }, [engine, captionsOn, showToast]);
+
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      stageRef.current?.requestFullscreen().catch(() => {});
+    }
+  }, []);
+
+  const seekRelative = useCallback(
+    (offsetSeconds: number) => {
+      engine.seekTo(currentTimeRef.current + offsetSeconds);
+      showToast(offsetSeconds > 0 ? `+${offsetSeconds}s` : `${offsetSeconds}s`);
+    },
+    [engine, showToast]
+  );
+
+  // Keyboard Hotkeys
+  useHotkeys({
+    onTogglePlay: togglePlay,
+    onSeekForward: () => seekRelative(10),
+    onSeekBackward: () => seekRelative(-10),
+    onNext: playNextVideo,
+    onPrev: playPrevVideo,
+    onToggleMute: toggleMute,
+    onToggleFullscreen: toggleFullscreen,
+    onToggleMini: () => setIsMinimized((prev) => !prev),
+    onOpenCommand: () => headerRef.current?.focusSearch(),
+  });
+
+  // MediaSession API integration
+  useMediaSession(meta, activeVideoId, {
+    onPlay: () => {
+      engine.play();
+      setIsPlaying(true);
+    },
+    onPause: () => {
+      engine.pause();
+      setIsPlaying(false);
+    },
+    onNext: playNextVideo,
+    onPrev: playPrevVideo,
+  });
+
+  // Document title sync
   useEffect(() => {
     if (typeof document !== "undefined") {
-      if (meta?.title) {
-        document.title = `${meta.title} - xyz`;
-      } else {
-        document.title = "xyz - Video Player";
-      }
+      document.title = meta?.title ? `${meta.title} - xyz` : "xyz";
     }
   }, [meta?.title]);
 
-  // Comprehensive Autoplay Detection & Event Handling
+  // postMessage event receiver for YouTube iframe events
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
+      if (event.source !== iframeRef.current?.contentWindow) return;
       try {
-        const data =
-          typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
 
-        // 1. Ready event: Handshake & immediate play if autoplay active
         if (data?.event === "onReady" || data?.info === "onReady") {
-          sendPlayerHandshakeRef.current();
-          if (
-            activeVideoIdRef.current &&
-            activeVideoIdRef.current !== initialEmbedIdRef.current
-          ) {
-            sendPlayerCommandRef.current("loadVideoById", [
-              activeVideoIdRef.current,
-              0,
-            ]);
+          sendPlayerHandshake();
+          if (activeVideoIdRef.current && activeVideoIdRef.current !== initialVideoIdRef.current) {
+            sendPlayerCommand("loadVideoById", [activeVideoIdRef.current, 0]);
           }
-          if (isAutoplayRef.current) {
-            sendPlayerCommandRef.current("playVideo");
+          if (isAutoplayRef.current && !videoActiveRef.current) {
+            sendPlayerCommand("playVideo");
+            setIsPlaying(true);
           }
         }
 
-        // 2. Extract player state
+        // While the <video> element is active, the (paused) iframe is not the source of truth.
+        if (videoActiveRef.current) return;
+
+        // Progress / volume telemetry that drives the custom controls
+        if (data?.event === "infoDelivery" && data.info) {
+          const info = data.info;
+          if (typeof info.currentTime === "number") setCurrentTime(info.currentTime);
+          if (typeof info.duration === "number" && info.duration > 0) setDuration(info.duration);
+          if (typeof info.volume === "number") setVolumeState(info.volume);
+          if (typeof info.muted === "boolean") setIsMuted(info.muted);
+          if (typeof info.playbackRate === "number") setRateState(info.playbackRate);
+        }
+
         const playerState =
           data?.event === "onStateChange"
             ? data?.info
@@ -520,61 +636,22 @@ export function XyzPlayer() {
             ? data?.info?.playerState
             : undefined;
 
-        // 1 = PLAYING
         if (playerState === 1) {
+          setIsPlaying(true);
+          setHasStarted(true);
+          setIsBuffering(false);
           ensureAudioContext();
-          if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-            try {
-              navigator.mediaSession.playbackState = "playing";
-            } catch {}
-          }
-        }
-
-        // 2 = PAUSED
-        if (playerState === 2) {
-          if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-            try {
-              navigator.mediaSession.playbackState = "paused";
-            } catch {}
-          }
-        }
-
-        // 0 = ENDED (advance to next video)
-        if (playerState === 0) {
-          if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-            try {
-              navigator.mediaSession.playbackState = "none";
-            } catch {}
-          }
+        } else if (playerState === 2) {
+          setIsPlaying(false);
+        } else if (playerState === 3) {
+          setIsBuffering(true);
+        } else if (playerState === 0) {
+          setIsPlaying(false);
           if (isAutoplayRef.current) {
             const now = Date.now();
             if (now - lastEndedTriggerRef.current > 2000) {
               lastEndedTriggerRef.current = now;
-              playNextVideoRef.current();
-            }
-          }
-        }
-
-        // 5 = CUED: start playing if autoplay enabled
-        if (playerState === 5 && isAutoplayRef.current) {
-          sendPlayerCommandRef.current("playVideo");
-        }
-
-        // 3. Fallback: duration-based ended check
-        if (data?.event === "infoDelivery" && data?.info) {
-          const { currentTime, duration } = data.info;
-          if (
-            typeof currentTime === "number" &&
-            typeof duration === "number" &&
-            duration > 5 &&
-            currentTime >= duration - 0.7
-          ) {
-            if (isAutoplayRef.current) {
-              const now = Date.now();
-              if (now - lastEndedTriggerRef.current > 2000) {
-                lastEndedTriggerRef.current = now;
-                playNextVideoRef.current();
-              }
+              playNextVideo();
             }
           }
         }
@@ -585,883 +662,352 @@ export function XyzPlayer() {
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, []);
+  }, [sendPlayerHandshake, sendPlayerCommand, playNextVideo]);
 
-  // Periodic heartbeat while autoplay is enabled to guarantee sync
-  useEffect(() => {
-    if (!isAutoplay) return;
+  // <video> events feed the same controls state
+  const streamEvents = useMemo(
+    () => ({
+      onTimeUpdate: (e: React.SyntheticEvent<HTMLVideoElement>) => setCurrentTime(e.currentTarget.currentTime),
+      onDurationChange: (e: React.SyntheticEvent<HTMLVideoElement>) => {
+        const d = e.currentTarget.duration;
+        setDuration(Number.isFinite(d) ? d : 0);
+      },
+      onPlay: () => {
+        setIsPlaying(true);
+        setHasStarted(true);
+      },
+      onPause: () => setIsPlaying(false),
+      onEnded: () => {
+        setIsPlaying(false);
+        if (isAutoplayRef.current) playNextVideo();
+      },
+      onVolumeChange: (e: React.SyntheticEvent<HTMLVideoElement>) => {
+        setVolumeState(Math.round(e.currentTarget.volume * 100));
+        setIsMuted(e.currentTarget.muted);
+      },
+      onLoadStart: () => setIsBuffering(true),
+      onWaiting: () => setIsBuffering(true),
+      onSeeking: () => setIsBuffering(true),
+      onCanPlay: () => setIsBuffering(false),
+      onPlaying: () => setIsBuffering(false),
+      onSeeked: () => setIsBuffering(false),
+    }),
+    [playNextVideo]
+  );
 
-    const timer = setInterval(() => {
-      sendPlayerHandshakeRef.current();
-      sendPlayerCommandRef.current("getCurrentTime");
-      sendPlayerCommandRef.current("getDuration");
-    }, 1000);
+  // Spinner: while sources resolve (native) and whenever the <video> is loading/buffering.
+  const isLoading =
+    !playbackError &&
+    (isBuffering || (playbackMode === "native" && !streamUrl && dashUrls === null));
 
-    return () => clearInterval(timer);
-  }, [isAutoplay, activeVideoId]);
+  const posterUrl = streamUrl
+    ? null
+    : meta?.thumbnailUrl || (activeVideoId ? `/api/xyz/thumb/${activeVideoId}` : null);
 
-  // IFrame load handshake to start playback & subscribe to events
-  function handleIframeLoad() {
+  const handleIframeLoad = () => {
     iframeLoadedRef.current = true;
-    sendPlayerHandshake();
-    if (
-      activeVideoIdRef.current &&
-      activeVideoIdRef.current !== initialEmbedIdRef.current
-    ) {
-      sendPlayerCommand("loadVideoById", [activeVideoIdRef.current, 0]);
-    }
-    if (autoplay || isAutoplayRef.current) {
-      sendPlayerCommand("playVideo");
-      setTimeout(() => {
-        sendPlayerCommand("playVideo");
-      }, 300);
-      setTimeout(() => {
-        sendPlayerCommand("playVideo");
-      }, 800);
-    }
-  }
-
-  async function executeSearch(query: string) {
-    setIsSuggestOpen(false);
-    setSelectedSuggestIndex(-1);
-    setError("");
-    searchInputRef.current?.blur();
-    const q = query.trim();
-    if (!q) return;
-
-    // Direct link: only parse if input looks like a URL
-    const isUrl =
-      /^https?:\/\//i.test(q) ||
-      q.includes("youtube.com") ||
-      q.includes("youtu.be");
-
-    if (isUrl) {
-      const parseRes = parseXyzUrl(q);
-      if (parseRes.ok) {
-        const fallbackMeta =
-          getFallbackMeta(parseRes.videoId) ||
-          displayedVideosRef.current.find((v) => v.id === parseRes.videoId);
-        const directVideo: XyzVideo = {
-          id: parseRes.videoId,
-          title: fallbackMeta?.title || "Video",
-          channel:
-            fallbackMeta && "authorName" in fallbackMeta
-              ? (fallbackMeta as VideoMeta).authorName
-              : (fallbackMeta as XyzVideo)?.channel || "Creator",
-          channelUrl:
-            fallbackMeta && "authorUrl" in fallbackMeta
-              ? (fallbackMeta as VideoMeta).authorUrl
-              : (fallbackMeta as XyzVideo)?.channelUrl || "",
-          duration: fallbackMeta?.duration || "Video",
-          views: "",
-          uploadedAt: "",
-          category: "General",
-          thumbnailUrl: `/api/xyz?thumb=${parseRes.videoId}`,
-          description: fallbackMeta?.description || "",
-        };
-        handleSelectVideo(directVideo);
-        setError("");
-        setSearchResults(null);
-        setSearchQueryLabel("");
-        setSearchPage(1);
-        setHasMore(false);
-        return;
+    setTimeout(() => {
+      sendPlayerHandshake();
+      if (activeVideoId !== initialVideoIdRef.current) {
+        sendPlayerCommand("loadVideoById", [activeVideoId, 0]);
       }
-    }
-
-    setSearchPage(1);
-    setHasMore(true);
-
-    // Live search
-    try {
-      const keyParam = savedApiKey
-        ? `&key=${encodeURIComponent(savedApiKey)}`
-        : "";
-      const res = await fetch(
-        `/api/xyz?q=${encodeURIComponent(q)}&page=1${keyParam}`
-      );
-      if (res.ok) {
-        const data = await res.json();
-        if (data.results && data.results.length > 0) {
-          setSearchResults(data.results);
-          setSearchQueryLabel(q);
-          setHasMore(data.hasMore ?? data.results.length >= 8);
-          setError("");
-          handleSelectVideo(data.results[0]);
-          showToast(`Playing: ${data.results[0].title}`);
-          return;
-        }
+      if (isAutoplay) {
+        sendPlayerCommand("playVideo");
+        setIsPlaying(true);
       }
-    } catch {
-      // ignore
+    }, 300);
+  };
+
+  const handleCopyLink = () => {
+    // Share an in-app link: recipients may be on networks where youtube.com is blocked.
+    const appUrl = new URL(window.location.href);
+    appUrl.search = "";
+    appUrl.searchParams.set("v", activeVideoId);
+    const url = streamUrl ?? appUrl.toString();
+    navigator.clipboard.writeText(url).catch(() => {});
+  };
+
+  const handleSelectChip = (sectionId: string) => {
+    setActiveChip(sectionId);
+    setListNextPage(null);
+    const requestId = ++listRequestRef.current;
+    if (sectionId === DEFAULT_SECTION_ID) {
+      setListLoading(false);
+      setQueue(XYZ_CATALOG_VIDEOS);
+      return;
     }
+    setListLoading(true);
+    void fetchSection(sectionId).then((page) => {
+      if (requestId !== listRequestRef.current) return;
+      setListLoading(false);
+      setQueue(page && page.items.length > 0 ? page.items : XYZ_CATALOG_VIDEOS);
+      setListNextPage(page?.nextPageToken ?? null);
+    });
+  };
 
-    // Fallback catalog search
-    const qLower = q.toLowerCase();
-    const matched = XYZ_CATALOG_VIDEOS.filter(
-      (v) =>
-        v.title.toLowerCase().includes(qLower) ||
-        v.channel.toLowerCase().includes(qLower) ||
-        v.description.toLowerCase().includes(qLower)
-    );
-
-    if (matched.length > 0) {
-      setSearchResults(matched);
-      setSearchQueryLabel(q);
-      setHasMore(false);
-      setError("");
-      handleSelectVideo(matched[0]);
-      showToast(`Playing: ${matched[0].title}`);
-    } else {
-      setError(`No videos found matching "${q}".`);
-    }
-  }
-
-  function handleSearchSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const queryToSearch =
-      isSuggestOpen &&
-      selectedSuggestIndex >= 0 &&
-      selectedSuggestIndex < suggestions.length
-        ? suggestions[selectedSuggestIndex]
-        : inputVal;
-    setIsSuggestOpen(false);
-    setSelectedSuggestIndex(-1);
-    setError("");
-    searchInputRef.current?.blur();
-    executeSearch(queryToSearch);
-  }
-
-  function handleSelectSuggestion(s: string) {
-    setInputVal(s);
-    setIsSuggestOpen(false);
-    setSelectedSuggestIndex(-1);
-    setError("");
-    searchInputRef.current?.blur();
-    executeSearch(s);
-  }
-
-  // Scroll active suggestion into view when navigating with arrow keys
-  useEffect(() => {
-    if (selectedSuggestIndex >= 0) {
-      const el = document.getElementById(`suggest-item-${selectedSuggestIndex}`);
-      el?.scrollIntoView({ block: "nearest" });
-    }
-  }, [selectedSuggestIndex]);
-
-  function clearSearchFilter() {
-    setSearchQueryLabel("");
-    setInputVal("");
-    setError("");
-    setSearchPage(1);
-    setHasMore(true);
-    fetch(`/api/xyz?related=${activeVideoId}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.results?.length) {
-          setSearchResults(data.results);
-          setHasMore(data.hasMore ?? false);
-        } else {
-          setSearchResults(null);
-        }
-      })
-      .catch(() => {
-        setSearchResults(null);
+  const loadMoreSection = () => {
+    if (!listNextPage || listLoadingMore) return;
+    const requestId = listRequestRef.current;
+    setListLoadingMore(true);
+    void fetchSection(activeChip, listNextPage).then((page) => {
+      setListLoadingMore(false);
+      if (requestId !== listRequestRef.current || !page) return;
+      setQueue((prev) => {
+        const seen = new Set(prev.map((v) => v.id));
+        return [...prev, ...page.items.filter((v) => !seen.has(v.id))];
       });
-  }
+      setListNextPage(page.nextPageToken);
+    });
+  };
 
-  async function loadMoreVideos() {
-    if (isLoadingMore || !hasMore) return;
-    setIsLoadingMore(true);
-    const nextPage = searchPage + 1;
-
-    try {
-      const keyParam = savedApiKey
-        ? `&key=${encodeURIComponent(savedApiKey)}`
-        : "";
-      const endpoint =
-        searchQueryLabel && searchQueryLabel !== "Trending"
-          ? `/api/xyz?q=${encodeURIComponent(searchQueryLabel)}&page=${nextPage}${keyParam}`
-          : `/api/xyz?feed=trending&page=${nextPage}${keyParam}`;
-
-      const res = await fetch(endpoint);
-      if (res.ok) {
-        const data = await res.json();
-        const incoming: XyzVideo[] = data?.results || [];
-        if (incoming.length > 0) {
-          const currentList = displayedVideosRef.current || [];
-          const existingIds = new Set(currentList.map((v) => v.id));
-          const freshItems = incoming.filter((v) => !existingIds.has(v.id));
-
-          if (freshItems.length > 0) {
-            setSearchResults((prev) => [...(prev ?? XYZ_CATALOG_VIDEOS), ...freshItems]);
-            setSearchPage(nextPage);
-            setHasMore(data.hasMore ?? incoming.length >= 8);
-            showToast(`Loaded ${freshItems.length} more videos`);
-          } else {
-            setHasMore(false);
-            showToast("No more videos available");
-          }
-        } else {
-          setHasMore(false);
-          showToast("No more videos available");
-        }
-      } else {
-        setHasMore(false);
-      }
-    } catch {
-      setHasMore(false);
-    } finally {
-      setIsLoadingMore(false);
+  const handleSearch = (input: string) => {
+    const hls = parseHlsUrl(input);
+    if (hls) {
+      setView({ type: "watch" });
+      playStream(hls);
+      return;
     }
-  }
+    const parsed = parseXyzUrl(input);
+    if (parsed.ok) {
+      setView({ type: "watch" });
+      playVideoById(parsed.videoId);
+      return;
+    }
+    const requestId = ++listRequestRef.current;
+    setView({ type: "search", query: input, results: [], loading: true });
+    window.scrollTo({ top: 0 });
+    void fetchVideos(`/api/xyz?q=${encodeURIComponent(input)}`).then((results) => {
+      if (requestId !== listRequestRef.current) return;
+      setView({ type: "search", query: input, results: results ?? [], loading: false });
+    });
+  };
 
-  function handleCopyLink() {
-    const url = getXyzWatchUrl(activeVideoId);
-    navigator.clipboard.writeText(url);
-    setCopied(true);
-    showToast("Link copied");
-    setTimeout(() => setCopied(false), 2000);
-  }
+  const openFromSearch = (video: XyzVideo) => {
+    if (view.type === "search") {
+      setQueue(view.results);
+      setActiveChip("");
+    }
+    setView({ type: "watch" });
+    window.scrollTo({ top: 0 });
+    playVideoById(video.id, video);
+  };
 
-  function openSettings() {
-    setTempApiKey(savedApiKey);
+  const handleOpenSettings = () => {
+    setTempPlaybackMode(playbackMode);
+    setTempApiKey(apiKey);
     setShowSettings(true);
-  }
+  };
 
-  function saveSettings(e: React.FormEvent) {
+  const saveSettings = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanKey = tempApiKey.trim();
-    setSavedApiKey(cleanKey);
-    try {
-      if (cleanKey) {
-        localStorage.setItem("xyz_api_key", cleanKey);
-      } else {
-        localStorage.removeItem("xyz_api_key");
-      }
-    } catch {
-      // ignore
+    const key = tempApiKey.trim();
+    if (tempPlaybackMode === "embed" && key && !YOUTUBE_API_KEY.test(key)) {
+      showToast("That doesn't look like a YouTube API key");
+      return;
     }
+    try {
+      localStorage.setItem(PLAYBACK_MODE_KEY, tempPlaybackMode);
+      if (tempPlaybackMode === "embed") {
+        if (key) localStorage.setItem(API_KEY_STORAGE, key);
+        else localStorage.removeItem(API_KEY_STORAGE);
+      }
+    } catch {}
+    if (tempPlaybackMode === "embed") setApiKey(key);
+    setPlaybackMode(tempPlaybackMode);
     setShowSettings(false);
-    showToast(cleanKey ? "Key saved" : "Default search restored");
-  }
+    showToast(tempPlaybackMode === "native" ? "Using built-in player" : "Using YouTube player");
+  };
+
+  const upNext = (
+    <div className="flex flex-col gap-3">
+      <ChipBar active={activeChip} onSelect={handleSelectChip} />
+      <UpNextList
+        videos={queue}
+        activeId={activeVideoId}
+        loading={listLoading}
+        hasMore={Boolean(listNextPage)}
+        loadingMore={listLoadingMore}
+        onLoadMore={loadMoreSection}
+        onSelect={(video) => {
+          playVideoById(video.id, video);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }}
+      />
+    </div>
+  );
 
   return (
-    <>
-      {/* 1. Sticky Header with Search Bar */}
-      <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4 sm:gap-4 sm:px-6">
-          {/* Sticky Search Bar & Suggestions */}
-          <div ref={searchContainerRef} className="relative flex-1 max-w-md sm:max-w-xl md:max-w-2xl">
-            <form onSubmit={handleSearchSubmit} className="flex items-center gap-1.5 sm:gap-2">
-              <div className="relative flex-1">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground sm:left-3 sm:size-4" />
-                <Input
-                  ref={searchInputRef}
-                  type="text"
-                  placeholder="Search Google YouTube / xyz... (press /)"
-                  value={inputVal}
-                  onFocus={() => {
-                    if (suggestions.length > 0) setIsSuggestOpen(true);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "ArrowDown" && isSuggestOpen && suggestions.length > 0) {
-                      e.preventDefault();
-                      const nextIdx =
-                        selectedSuggestIndex < suggestions.length - 1
-                          ? selectedSuggestIndex + 1
-                          : 0;
-                      setSelectedSuggestIndex(nextIdx);
-                      if (suggestions[nextIdx]) {
-                        setInputVal(suggestions[nextIdx]);
-                      }
-                      return;
-                    }
-                    if (e.key === "ArrowUp" && isSuggestOpen && suggestions.length > 0) {
-                      e.preventDefault();
-                      const prevIdx =
-                        selectedSuggestIndex > 0
-                          ? selectedSuggestIndex - 1
-                          : suggestions.length - 1;
-                      setSelectedSuggestIndex(prevIdx);
-                      if (suggestions[prevIdx]) {
-                        setInputVal(suggestions[prevIdx]);
-                      }
-                      return;
-                    }
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      const queryToSearch =
-                        isSuggestOpen &&
-                        selectedSuggestIndex >= 0 &&
-                        selectedSuggestIndex < suggestions.length
-                          ? suggestions[selectedSuggestIndex]
-                          : inputVal;
-                      setIsSuggestOpen(false);
-                      setSelectedSuggestIndex(-1);
-                      setError("");
-                      searchInputRef.current?.blur();
-                      executeSearch(queryToSearch);
-                      return;
-                    }
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      setIsSuggestOpen(false);
-                      setSelectedSuggestIndex(-1);
-                      searchInputRef.current?.blur();
-                      return;
-                    }
-                  }}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setInputVal(val);
-                    setSelectedSuggestIndex(-1);
-                    if (error) setError("");
-                    if (val.trim().length < 2 || val.trim().startsWith("http")) {
-                      setSuggestions([]);
-                      setIsSuggestOpen(false);
-                    }
-                  }}
-                  className="h-9 pl-8 pr-7 text-xs sm:pl-9 sm:pr-8 sm:text-sm"
-                  aria-label="Search video or enter link"
-                  aria-autocomplete="list"
-                  aria-expanded={isSuggestOpen}
-                />
-                {inputVal && (
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
-                    onClick={() => {
-                      setInputVal("");
-                      setSuggestions([]);
-                      setSelectedSuggestIndex(-1);
-                      setIsSuggestOpen(false);
-                    }}
-                    aria-label="Clear input"
-                  >
-                    <X className="size-3.5" />
-                  </button>
-                )}
-              </div>
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <SiteHeader
+        ref={headerRef}
+        onSearch={handleSearch}
+        onOpenSettings={handleOpenSettings}
+        onHome={() => setView({ type: "watch" })}
+      />
 
-              <Button type="submit" size="sm" className="h-9 px-3 text-xs sm:text-sm font-medium">
-                Search
-              </Button>
-            </form>
+      {view.type === "search" && (
+        <SearchResults query={view.query} videos={view.results} loading={view.loading} onSelect={openFromSearch} />
+      )}
 
-            {/* Autocomplete Suggestions Dropdown */}
-            {isSuggestOpen && suggestions.length > 0 && (
-              <div
-                className="absolute left-0 right-0 top-full z-50 mt-1 max-h-60 overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg"
-                role="listbox"
-              >
-                {suggestions.map((item, index) => {
-                  const isSelected = selectedSuggestIndex === index;
-                  return (
-                    <div
-                      key={`${item}-${index}`}
-                      id={`suggest-item-${index}`}
-                      onMouseDown={(e) => {
-                        // Prevent search input from blurring before click completes
-                        e.preventDefault();
-                      }}
-                      className={`flex cursor-pointer items-center justify-between rounded-sm px-2.5 py-1.5 text-xs transition-colors ${
-                        isSelected
-                          ? "bg-accent text-accent-foreground font-medium"
-                          : "text-foreground hover:bg-muted/60"
-                      }`}
-                      role="option"
-                      aria-selected={isSelected}
-                      onMouseEnter={() => setSelectedSuggestIndex(index)}
-                      onClick={() => handleSelectSuggestion(item)}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Search className="size-3 text-muted-foreground shrink-0" />
-                        <span className="truncate">{item}</span>
-                      </div>
-                      {isSelected && (
-                        <span className="text-[10px] text-muted-foreground font-mono shrink-0 pl-2">
-                          ↵ Enter
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Right Header Controls */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <kbd className="hidden md:inline-flex h-5 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
-              <span className="text-xs">/</span> to search
-            </kbd>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0"
-              onClick={openSettings}
-              title="Search Settings"
-              aria-label="Settings"
-            >
-              <Settings2 className="size-4" />
-            </Button>
-          </div>
+      {/* Watch page stays mounted during search so playback continues (shown as a mini player). */}
+      <main
+        id="main"
+        className={
+          view.type === "search"
+            ? "contents"
+            : "mx-auto grid w-full max-w-[1754px] grid-cols-1 gap-x-6 gap-y-4 pb-12 sm:px-6 sm:pt-6 lg:grid-cols-[minmax(0,1fr)_400px] lg:grid-rows-[auto_1fr]"
+        }
+      >
+        <div className="lg:col-start-1 lg:row-start-1">
+          <AmbientStage
+            meta={meta}
+            stageRef={stageRef}
+            iframeRef={iframeRef}
+            videoRef={videoRef}
+            embedUrl={playbackMode === "embed" ? initialEmbedUrl : null}
+            videoActive={videoActive}
+            streamEvents={streamEvents}
+            playbackError={playbackError}
+            onRetry={retryPlayback}
+            onSkip={playNextVideo}
+            onIframeLoad={handleIframeLoad}
+            isMinimized={isMinimized || view.type === "search"}
+            onToggleMinimize={() => {
+              if (view.type === "search") setView({ type: "watch" });
+              else setIsMinimized((prev) => !prev);
+            }}
+            controls={{
+              isPlaying,
+              hasStarted,
+              currentTime,
+              duration,
+              volume,
+              isMuted,
+              rate,
+              captionsOn,
+              isFullscreen,
+              posterUrl,
+              onTogglePlay: togglePlay,
+              onSeek: engine.seekTo,
+              onVolume: changeVolume,
+              onToggleMute: toggleMute,
+              onRate: changeRate,
+              onToggleCaptions: toggleCaptions,
+              onToggleFullscreen: toggleFullscreen,
+              onNext: playNextVideo,
+              onPrev: playPrevVideo,
+              qualities: streamUrl ? [] : shaka.qualities.map((q) => q.height),
+              quality: shaka.quality,
+              onQuality: shaka.setQuality,
+              isLoading,
+              concealPaused: !videoActive,
+            }}
+          />
         </div>
-      </header>
 
-      {/* Main Content */}
-      <main id="main" className="flex-1 py-4 sm:py-6">
-        <div className="mx-auto w-full max-w-4xl px-4 sm:px-6">
-          {error && (
-            <div
-              className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3.5 py-2 text-center text-xs text-destructive"
-              role="alert"
+        {view.type === "watch" && (
+          <>
+            <div className="px-4 sm:px-0 lg:col-start-1 lg:row-start-2">
+              <VideoDetails
+                meta={meta}
+                autoplay={isAutoplay}
+                onToggleAutoplay={() => setIsAutoplay((prev) => !prev)}
+                onCopyLink={handleCopyLink}
+              />
+            </div>
+
+            <aside
+              aria-label="Up next"
+              className="px-4 sm:px-0 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start"
             >
-              {error}
-            </div>
-          )}
+              <h2 className="mb-2 font-display text-lg font-semibold">Up next</h2>
+              {upNext}
+            </aside>
 
-          {/* Main Layout: Sticky Video Preview Player + Controls + Video Listing at Bottom */}
-          <div className="flex flex-col gap-6">
-            {/* 1. Sticky Video Preview Player */}
-            <div className="sticky top-14 z-30 bg-background/95 backdrop-blur py-2">
-              {isMinimized && (
-                <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center">
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
-                    <span>Playing in corner mini-player</span>
-                  </div>
-                  <p className="max-w-md truncate text-sm font-medium text-foreground">
-                    {meta?.title ?? "Video"}
-                  </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIsMinimized(false)}
-                    className="h-8 gap-1.5 text-xs"
-                  >
-                    <Maximize2 className="size-3.5" />
-                    <span>Restore to full screen</span>
-                  </Button>
-                </div>
-              )}
-
-              <div
-                className={
-                  isMinimized
-                    ? "fixed bottom-5 right-5 z-50 flex w-72 sm:w-84 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl transition-all duration-200"
-                    : "relative aspect-video w-full overflow-hidden rounded-xl border border-border bg-black shadow-sm"
-                }
-              >
-                <div className={isMinimized ? "relative aspect-video w-full bg-black" : "h-full w-full"}>
-                  <iframe
-                    ref={iframeRef}
-                    key="xyz-persistent-player"
-                    onLoad={handleIframeLoad}
-                    className="h-full w-full border-0"
-                    src={initialEmbedUrl}
-                    title={meta?.title ?? "Video"}
-                    referrerPolicy="strict-origin-when-cross-origin"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowFullScreen
-                  />
-                </div>
-
-                {isMinimized && (
-                  <div className="flex items-center justify-between border-t border-border bg-card p-2.5">
-                    <div className="flex min-w-0 flex-1 flex-col pr-2">
-                      <p className="truncate text-xs font-medium text-foreground">
-                        {meta?.title}
-                      </p>
-                      <p className="truncate text-[10px] text-muted-foreground">
-                        {meta?.authorName}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                        onClick={playPrevVideo}
-                        title="Previous video"
-                      >
-                        <SkipBack className="size-3.5" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                        onClick={playNextVideo}
-                        title="Next video"
-                      >
-                        <SkipForward className="size-3.5" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                        onClick={() => setIsMinimized(false)}
-                        title="Restore player"
-                      >
-                        <Maximize2 className="size-3.5" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                        onClick={() => setIsMinimized(false)}
-                        title="Close mini-player"
-                      >
-                        <X className="size-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* 2. Video Info & Actions */}
-            <div className="flex flex-col gap-3">
-              <h1 className="text-base sm:text-lg lg:text-xl font-semibold tracking-tight text-foreground leading-snug">
-                {meta?.title ?? "Loading..."}
-              </h1>
-
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-col min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">
-                    {meta?.authorName ?? "Creator"}
-                  </p>
-                  {meta?.duration && (
-                    <p className="text-xs text-muted-foreground">
-                      Duration: {meta.duration}
-                    </p>
-                  )}
-                </div>
-
-                {/* Actions: Prev, Next, Autoplay, Minimize, Copy */}
-                <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={playPrevVideo}
-                    className="h-8 gap-1.5 px-2.5 text-xs font-normal"
-                    title="Play previous video in queue"
-                  >
-                    <SkipBack className="size-3.5" />
-                    <span>Prev</span>
-                  </Button>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={playNextVideo}
-                    className="h-8 gap-1.5 px-2.5 text-xs font-normal"
-                    title="Play next video in queue"
-                  >
-                    <SkipForward className="size-3.5" />
-                    <span>Next</span>
-                  </Button>
-
-                  <Button
-                    type="button"
-                    variant={isAutoplay ? "secondary" : "outline"}
-                    size="sm"
-                    onClick={() => {
-                      const nextState = !isAutoplay;
-                      setIsAutoplay(nextState);
-                      showToast(nextState ? "Autoplay enabled" : "Autoplay paused");
-                    }}
-                    className="h-8 gap-1.5 px-2.5 text-xs font-normal"
-                    title="Toggle automatic playback of next video"
-                  >
-                    <Play className={`size-3.5 ${isAutoplay ? "fill-current" : ""}`} />
-                    <span>Autoplay: {isAutoplay ? "On" : "Off"}</span>
-                  </Button>
-
-                  <Button
-                    type="button"
-                    variant={isMinimized ? "secondary" : "outline"}
-                    size="sm"
-                    onClick={() => setIsMinimized(!isMinimized)}
-                    className="h-8 gap-1.5 px-2.5 text-xs font-normal"
-                    title="Minimize screen to corner (Press 'm')"
-                  >
-                    {isMinimized ? (
-                      <Maximize2 className="size-3.5" />
-                    ) : (
-                      <Minimize2 className="size-3.5" />
-                    )}
-                    <span>{isMinimized ? "Restore" : "Minimize"}</span>
-                  </Button>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleCopyLink}
-                    className="h-8 gap-1.5 px-2.5 text-xs font-normal"
-                    title="Copy link"
-                  >
-                    {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-                    <span>{copied ? "Copied" : "Copy"}</span>
-                  </Button>
-                </div>
-              </div>
-
-              {/* Collapsible description */}
-              {meta?.description && (
-                <div
-                  onClick={() => setShowFullDesc((prev) => !prev)}
-                  className="mt-1 cursor-pointer rounded-xl border border-border/60 bg-muted/30 p-3.5 text-xs text-muted-foreground hover:bg-muted/50 transition-colors"
-                >
-                  <div className="flex items-center justify-between pb-1 font-medium text-foreground">
-                    <span>Description</span>
-                    <span className="text-[11px] text-muted-foreground font-normal">
-                      {showFullDesc ? "Show less" : "Show more"}
-                    </span>
-                  </div>
-                  <p
-                    className={`leading-relaxed ${
-                      showFullDesc ? "whitespace-pre-line" : "line-clamp-2"
-                    }`}
-                  >
-                    {meta.description}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* 3. Video Listing at Bottom (Old Style) */}
-            <div className="flex flex-col gap-3 pt-2">
-              <div className="flex items-center justify-between border-b border-border/40 pb-2.5">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    {searchQueryLabel ? `Results for "${searchQueryLabel}"` : "Queue"}
-                  </span>
-                  <span className="text-xs text-muted-foreground font-mono">
-                    ({displayedVideos.length})
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchQueryLabel("Trending");
-                      setSearchPage(1);
-                      setHasMore(true);
-                      fetch(`/api/xyz?feed=trending&page=1`)
-                        .then((res) => (res.ok ? res.json() : null))
-                        .then((data) => {
-                          if (data?.results?.length) {
-                            setSearchResults(data.results);
-                            setHasMore(data.hasMore ?? true);
-                          }
-                        });
-                    }}
-                    className="text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
-                  >
-                    Trending
-                  </button>
-                  {searchResults && (
-                    <>
-                      <span className="text-muted-foreground/30">&bull;</span>
-                      <button
-                        type="button"
-                        onClick={clearSearchFilter}
-                        className="text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
-                      >
-                        Reset
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Videos list in divide-y container */}
-              <div className="divide-y divide-border/40 rounded-xl border border-border bg-card/40 overflow-hidden shadow-sm">
-                {displayedVideos.map((video, idx) => {
-                  const isActive = video.id === activeVideoId;
-                  const activeIdx = displayedVideos.findIndex(
-                    (v) => v.id === activeVideoId
-                  );
-                  const isNext =
-                    (activeIdx >= 0 && idx === activeIdx + 1) ||
-                    (activeIdx === displayedVideos.length - 1 && idx === 0);
-
-                  return (
-                    <div
-                      key={`${video.id}-${idx}`}
-                      onClick={() => handleSelectVideo(video)}
-                      className={`group flex items-center justify-between gap-3 sm:gap-4 p-2.5 sm:p-3 transition-colors cursor-pointer hover:bg-muted/50 ${
-                        isActive ? "bg-muted/70" : ""
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        {/* Compact 16:9 Thumbnail with duration overlay */}
-                        <div className="relative aspect-video w-24 sm:w-32 shrink-0 overflow-hidden rounded-md bg-muted">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={video.thumbnailUrl || `/api/xyz?thumb=${video.id}`}
-                            alt={video.title}
-                            className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
-                            loading="lazy"
-                            onError={(e) => {
-                              const target = e.currentTarget as HTMLImageElement;
-                              if (!target.dataset.fallbackTried) {
-                                target.dataset.fallbackTried = "1";
-                                target.src = `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`;
-                              }
-                            }}
-                          />
-                          {video.duration && (
-                            <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1 py-0.5 font-mono text-[9px] sm:text-[10px] leading-none text-white">
-                              {video.duration}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Title & Channel */}
-                        <div className="flex flex-col min-w-0">
-                          <p
-                            className="line-clamp-2 text-xs sm:text-sm font-medium text-foreground group-hover:text-primary transition-colors leading-snug"
-                            title={video.title}
-                          >
-                            {video.title}
-                          </p>
-                          <p className="truncate text-[11px] sm:text-xs text-muted-foreground mt-0.5">
-                            {video.channel}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Status badge / duration */}
-                      <div className="flex items-center gap-2 shrink-0 pl-2">
-                        {isActive ? (
-                          <Badge
-                            variant="secondary"
-                            className="gap-1 text-[10px] sm:text-xs px-2 py-0.5 font-normal bg-foreground/10 text-foreground"
-                          >
-                            <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                            Playing
-                          </Badge>
-                        ) : isNext && isAutoplay ? (
-                          <Badge
-                            variant="outline"
-                            className="text-[10px] sm:text-xs px-2 py-0.5 font-normal text-muted-foreground border-border/60"
-                          >
-                            Up Next
-                          </Badge>
-                        ) : (
-                          <span className="hidden sm:inline font-mono text-xs text-muted-foreground/70">
-                            {video.duration}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Load more data */}
-              {hasMore ? (
-                <div className="flex justify-center pt-2 pb-6">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={isLoadingMore}
-                    onClick={loadMoreVideos}
-                    className="h-9 w-full max-w-xs gap-2 px-6 text-xs font-normal text-muted-foreground hover:text-foreground"
-                  >
-                    {isLoadingMore ? (
-                      <>
-                        <Loader2 className="size-3.5 animate-spin" />
-                        <span>Loading more videos...</span>
-                      </>
-                    ) : (
-                      <>
-                        <ChevronDown className="size-3.5" />
-                        <span>Load more videos</span>
-                      </>
-                    )}
-                  </Button>
-                </div>
-              ) : displayedVideos.length > 0 ? (
-                <div className="py-4 text-center text-xs text-muted-foreground/60">
-                  You&apos;ve reached the end of the list
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
+          </>
+        )}
       </main>
 
-      {/* 4. Settings Modal */}
+      {/* Settings Dialog */}
       {showSettings && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
           onClick={() => setShowSettings(false)}
         >
           <div
-            className="w-full max-w-sm rounded-lg border border-border bg-background p-5 shadow-lg"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-title"
+            className="w-full max-w-sm rounded-xl bg-popover p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between pb-3 border-b border-border">
-              <h3 className="text-sm font-medium text-foreground">
-                Search Settings
-              </h3>
+            <div className="flex items-center justify-between pb-3">
+              <h3 id="settings-title" className="text-base font-medium">Settings</h3>
               <button
                 type="button"
-                className="text-muted-foreground hover:text-foreground cursor-pointer"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer"
                 onClick={() => setShowSettings(false)}
+                aria-label="Close settings"
               >
                 <X className="size-4" />
               </button>
             </div>
 
-            <form onSubmit={saveSettings} className="flex flex-col gap-3 pt-4">
-              <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="search-key-input"
-                  className="text-xs font-medium text-foreground"
-                >
-                  Google YouTube Data API v3 Key (optional)
+            <form onSubmit={saveSettings} className="flex flex-col gap-4 pt-2">
+              <fieldset className="flex flex-col gap-2">
+                <legend className="mb-1 text-sm font-medium">Playback</legend>
+                <label className="flex items-start gap-2 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="playback-mode"
+                    className="mt-1"
+                    checked={tempPlaybackMode === "native"}
+                    onChange={() => setTempPlaybackMode("native")}
+                  />
+                  <span>
+                    Built-in player
+                    <span className="block text-xs text-muted-foreground">Works where YouTube is blocked.</span>
+                  </span>
                 </label>
-                <p className="text-[11px] text-muted-foreground leading-normal">
-                  Enter your Google API key to query YouTube&apos;s official v3 API directly. Without an API key, xyz automatically uses built-in public mirrors.
-                </p>
-                <Input
-                  id="search-key-input"
-                  type="password"
-                  placeholder="AIzaSy..."
-                  value={tempApiKey}
-                  onChange={(e) => setTempApiKey(e.target.value)}
-                  className="h-8 text-xs font-mono"
-                />
-              </div>
+                <label className="flex items-start gap-2 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="playback-mode"
+                    className="mt-1"
+                    checked={tempPlaybackMode === "embed"}
+                    onChange={() => setTempPlaybackMode("embed")}
+                  />
+                  <span>
+                    YouTube player
+                    <span className="block text-xs text-muted-foreground">Needs access to YouTube.</span>
+                  </span>
+                </label>
+              </fieldset>
+
+              {tempPlaybackMode === "embed" && (
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="api-key-input" className="text-sm font-medium">
+                    YouTube API key <span className="font-normal text-muted-foreground">(optional)</span>
+                  </label>
+                  <Input
+                    id="api-key-input"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="AIza..."
+                    value={tempApiKey}
+                    onChange={(e) => setTempApiKey(e.target.value)}
+                    className="h-9 font-mono text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">Used for search and video details.</p>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs"
-                  onClick={() => setShowSettings(false)}
-                >
+                <Button type="button" variant="ghost" size="sm" className="rounded-[10px]" onClick={() => setShowSettings(false)}>
                   Cancel
                 </Button>
-                <Button type="submit" size="sm" className="h-8 text-xs">
+                <Button type="submit" size="sm" className="rounded-[10px]">
                   Save
                 </Button>
               </div>
@@ -1470,12 +1016,14 @@ export function XyzPlayer() {
         </div>
       )}
 
-      {/* 5. Minimal Toast */}
       {toast && (
-        <div className="fixed bottom-4 right-4 z-50 rounded-md border border-border bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md">
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-border bg-popover px-4 py-2.5 text-sm shadow-2xl"
+        >
           {toast}
         </div>
       )}
-    </>
+    </div>
   );
 }

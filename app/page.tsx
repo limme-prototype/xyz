@@ -1,6 +1,16 @@
 import { XyzPlayer } from "./_components/xyz-player";
 
-export default function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{ v?: string }>;
+}) {
+  const resolvedParams = await searchParams;
+  const initialVideoId =
+    resolvedParams?.v && /^[A-Za-z0-9_-]{11}$/.test(resolvedParams.v)
+      ? resolvedParams.v
+      : undefined;
+
   return (
     <div className="relative flex min-h-screen flex-col bg-background text-foreground">
       <a
@@ -10,14 +20,8 @@ export default function Home() {
         Skip to player
       </a>
 
-      <XyzPlayer />
+      <XyzPlayer initialVideoId={initialVideoId} />
 
-      <footer className="border-t border-border/40 py-6">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 text-xs text-muted-foreground sm:px-6">
-          <p>xyz &bull; Distraction-free video player</p>
-          <p className="hidden sm:block">Clean &bull; Minimalist</p>
-        </div>
-      </footer>
     </div>
   );
 }

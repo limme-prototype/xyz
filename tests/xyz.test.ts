@@ -4,6 +4,7 @@ import {
   DEFAULT_VIDEO_ID,
   getXyzEmbedUrl,
   parseXyzUrl,
+  parseHlsUrl,
 } from "../lib/xyz";
 
 const id = "dQw4w9WgXcQ";
@@ -49,7 +50,18 @@ describe("XYZ_CATALOG_VIDEOS and DEFAULT_VIDEO_ID", () => {
   it("includes DEFAULT_VIDEO_ID in catalog", () => {
     const found = XYZ_CATALOG_VIDEOS.find((v) => v.id === DEFAULT_VIDEO_ID);
     expect(found).toBeDefined();
-    expect(found?.title).toContain("Never Gonna Give You Up");
+    expect(found?.category).toBe("Music");
+  });
+
+  it("does not ship placeholder videos in the default list", () => {
+    const ids = XYZ_CATALOG_VIDEOS.map((v) => v.id);
+    expect(ids).not.toContain("dQw4w9WgXcQ");
+    expect(ids).not.toContain("6bapv24Zz1E");
+    expect(ids).not.toContain("jfKfPfyJRdk");
+  });
+
+  it("only ships regular videos (live streams can't play in the built-in player)", () => {
+    for (const v of XYZ_CATALOG_VIDEOS) expect(v.duration).not.toBe("LIVE");
   });
 
   it("has valid video IDs in all catalog items", () => {
@@ -57,5 +69,30 @@ describe("XYZ_CATALOG_VIDEOS and DEFAULT_VIDEO_ID", () => {
       expect(v.id).toHaveLength(11);
       expect(v.thumbnailUrl).toContain(v.id);
     });
+  });
+});
+
+describe("headless embed + HLS", () => {
+  it("disables native YouTube chrome so custom controls are the only UI", () => {
+    const url = getXyzEmbedUrl(id);
+    expect(url).toContain("controls=0");
+    expect(url).toContain("disablekb=1");
+    expect(url).toContain("enablejsapi=1");
+  });
+
+  it.each([
+    "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+    "http://cdn.example.com/live/index.M3U8?token=abc",
+  ])("accepts HLS manifest %s", (url) => {
+    expect(parseHlsUrl(url)).not.toBeNull();
+  });
+
+  it.each([
+    "https://example.com/video.mp4",
+    "javascript:alert(1).m3u8",
+    "not a url",
+    "dQw4w9WgXcQ",
+  ])("rejects non-HLS input %s", (url) => {
+    expect(parseHlsUrl(url)).toBeNull();
   });
 });

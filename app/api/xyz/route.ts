@@ -1,6 +1,9 @@
 import dns from "node:dns";
 import { NextRequest, NextResponse } from "next/server";
 import { XYZ_CATALOG_VIDEOS, XyzVideo, parseXyzUrl } from "@/lib/xyz";
+import { fetchInvidiousJson, normalizeInvidiousVideo, type InvidiousVideoItem } from "@/lib/providers/invidious";
+import { formatDuration, parseDurationIso } from "@/lib/providers/format";
+import { fetchThumbnail } from "@/lib/providers/thumbnail";
 
 try {
   dns.setDefaultResultOrder?.("ipv4first");
@@ -8,23 +11,7 @@ try {
   // ignore in runtimes without node:dns
 }
 
-interface ThumbnailItem {
-  url?: string;
-}
-
-interface ProviderItem {
-  type?: string;
-  videoId?: string;
-  title?: string;
-  author?: string;
-  authorUrl?: string;
-  viewCountText?: string;
-  viewCount?: number;
-  publishedText?: string;
-  lengthSeconds?: number;
-  description?: string;
-  videoThumbnails?: ThumbnailItem[];
-}
+type ProviderItem = InvidiousVideoItem;
 
 interface GoogleSearchItem {
   id?: { videoId?: string };
@@ -43,64 +30,31 @@ interface GoogleVideoItem {
   statistics?: { viewCount?: string };
 }
 
-const PROVIDER_BASES = [
-  "https://invidious.f5.si",
-  "https://inv.nadeko.net",
-  "https://invidious.nerdvpn.de",
-  "https://yewtu.be",
-];
-
 const SERVER_FETCH_HEADERS = {
   "Accept": "application/json",
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
 };
 
-const DEPLOYMENT_RESPONSE_HEADERS = {
-  "Cache-Control": "public, s-maxage=1800, stale-while-revalidate=3600",
+const USER_API_KEY_HEADER = "x-youtube-api-key";
+const YOUTUBE_API_KEY = /^AIza[0-9A-Za-z_-]{35}$/;
+
+const PRIVATE_RESPONSE_HEADERS = {
+  "Cache-Control": "private, max-age=300",
   "X-Content-Type-Options": "nosniff",
 };
 
-function formatDuration(totalSec?: number): string {
-  if (typeof totalSec !== "number" || totalSec <= 0) return "Video";
-  const m = Math.floor(totalSec / 60);
-  const s = String(totalSec % 60).padStart(2, "0");
-  return `${m}:${s}`;
-}
+/**
+ * Every response of this route depends on its query string, and some CDNs (Netlify) leave query
+ * parameters out of the cache key, so a shared copy would be served for every query. Cache in the
+ * browser only. Cacheable-by-CDN endpoints use path parameters instead (thumb, manifest, sections).
+ */
+const DEPLOYMENT_RESPONSE_HEADERS = {
+  "Cache-Control": "private, max-age=300",
+  "X-Content-Type-Options": "nosniff",
+};
 
-function parseDurationIso(iso?: string): string {
-  if (!iso) return "Video";
-  const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
-  if (!match) return "Video";
-  const hours = parseInt(match[1] || "0", 10);
-  const minutes = parseInt(match[2] || "0", 10);
-  const seconds = parseInt(match[3] || "0", 10);
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-function normalizeProviderItem(item: ProviderItem): XyzVideo {
-  const duration = formatDuration(item.lengthSeconds);
-  const videoId = item.videoId || "";
-  const thumb = videoId
-    ? `/api/xyz?thumb=${videoId}`
-    : (item.videoThumbnails?.[0]?.url || "");
-
-  return {
-    id: videoId,
-    title: item.title || "",
-    channel: item.author || "Creator",
-    channelUrl: item.authorUrl ? `https://www.youtube.com${item.authorUrl}` : "",
-    views: item.viewCountText || (item.viewCount ? `${item.viewCount} views` : ""),
-    uploadedAt: item.publishedText || "",
-    duration,
-    category: "General",
-    thumbnailUrl: thumb,
-    description: item.description || "",
-  };
-}
+const normalizeProviderItem = normalizeInvidiousVideo;
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -112,58 +66,50 @@ export async function GET(request: NextRequest) {
   const rawIdOrUrl = searchParams.get("id") ?? searchParams.get("url");
   const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
 
-  const apiKey = searchParams.get("key")?.trim() || process.env.XYZ_API_KEY;
+  const avatar = searchParams.get("avatar")?.trim();
+  // A user's own key arrives in a header (never the query string, which leaks into logs and CDN caches).
+  const headerKey = request.headers.get(USER_API_KEY_HEADER)?.trim() ?? "";
+  const userApiKey = YOUTUBE_API_KEY.test(headerKey) ? headerKey : null;
+  const apiKey = userApiKey ?? process.env.XYZ_API_KEY;
+  // Responses fetched with a personal key are not shared through the CDN.
+  const responseHeaders = userApiKey ? PRIVATE_RESPONSE_HEADERS : DEPLOYMENT_RESPONSE_HEADERS;
 
-  // 0. Server-Proxied Thumbnail with Deployment Headers & Aggressive Caching
+  // 0a. Comment author avatars (yt3.ggpht.com path only; host is fixed so this cannot be used as an open proxy)
+  if (avatar !== undefined) {
+    if (!/^[A-Za-z0-9_\-=.\/]{1,300}$/.test(avatar) || avatar.includes("..")) {
+      return new NextResponse("Invalid avatar", { status: 400 });
+    }
+    try {
+      const res = await fetch(`https://yt3.ggpht.com/${avatar}`, {
+        headers: { "User-Agent": SERVER_FETCH_HEADERS["User-Agent"], Accept: "image/*" },
+        signal: AbortSignal.timeout(2500),
+      });
+      const contentType = res.headers.get("content-type") || "";
+      if (res.ok && contentType.startsWith("image/")) {
+        return new NextResponse(await res.arrayBuffer(), {
+          headers: {
+            "Content-Type": contentType,
+            "Cache-Control": "private, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+          },
+        });
+      }
+    } catch {
+      // fall through to 404
+    }
+    return new NextResponse(null, { status: 404, headers: { "Cache-Control": "private, max-age=3600" } });
+  }
+
+  // 0b. Legacy `?thumb=` URLs (old clients). New URLs use /api/xyz/thumb/:id, which the CDN can cache.
   if (thumb) {
     if (!/^[A-Za-z0-9_-]{11}$/.test(thumb)) {
       return new NextResponse("Invalid video ID", { status: 400 });
     }
-
-    const candidateUrls = [
-      `https://invidious.nerdvpn.de/vi/${thumb}/mqdefault.jpg`,
-      `https://inv.nadeko.net/vi/${thumb}/mqdefault.jpg`,
-      `https://i.ytimg.com/vi/${thumb}/mqdefault.jpg`,
-      `https://img.youtube.com/vi/${thumb}/mqdefault.jpg`,
-    ];
-
-    for (const url of candidateUrls) {
-      try {
-        const imgRes = await fetch(url, {
-          headers: {
-            "User-Agent": SERVER_FETCH_HEADERS["User-Agent"],
-            Accept:
-              "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-          },
-          signal: AbortSignal.timeout(2500),
-        });
-
-        if (imgRes.ok) {
-          const contentType = imgRes.headers.get("content-type") || "image/jpeg";
-          const buffer = await imgRes.arrayBuffer();
-          return new NextResponse(buffer, {
-            status: 200,
-            headers: {
-              "Content-Type": contentType,
-              "Cache-Control":
-                "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400",
-              "X-Content-Type-Options": "nosniff",
-            },
-          });
-        }
-      } catch {
-        // try next candidate
-      }
-    }
-
-    // High quality SVG fallback placeholder if upstream CDN unreachable
-    const fallbackSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180" fill="none"><rect width="320" height="180" fill="#18181b"/><path d="M140 70L190 90L140 110V70Z" fill="#71717a"/><text x="160" y="145" text-anchor="middle" fill="#71717a" font-family="system-ui, -apple-system, sans-serif" font-size="12">xyz</text></svg>`;
-
-    return new NextResponse(fallbackSvg, {
-      status: 200,
+    const image = await fetchThumbnail(thumb);
+    return new NextResponse(image.body, {
       headers: {
-        "Content-Type": "image/svg+xml",
-        "Cache-Control": "public, max-age=86400",
+        "Content-Type": image.contentType,
+        "Cache-Control": image.found ? "private, max-age=86400" : "private, max-age=300",
         "X-Content-Type-Options": "nosniff",
       },
     });
@@ -188,7 +134,7 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json(
           { suggestions },
-          { headers: DEPLOYMENT_RESPONSE_HEADERS }
+          { headers: responseHeaders }
         );
       }
     } catch {
@@ -199,12 +145,12 @@ export async function GET(request: NextRequest) {
       ).map((v) => v.title);
       return NextResponse.json(
         { suggestions: fallback.slice(0, 5) },
-        { headers: DEPLOYMENT_RESPONSE_HEADERS }
+        { headers: responseHeaders }
       );
     }
     return NextResponse.json(
       { suggestions: [] },
-      { headers: DEPLOYMENT_RESPONSE_HEADERS }
+      { headers: responseHeaders }
     );
   }
 
@@ -229,12 +175,12 @@ export async function GET(request: NextRequest) {
             uploadedAt: new Date(i.snippet.publishedAt).toLocaleDateString(),
             duration: parseDurationIso(i.contentDetails?.duration),
             category: "General",
-            thumbnailUrl: `/api/xyz?thumb=${i.id}`,
+            thumbnailUrl: `/api/xyz/thumb/${i.id}`,
             description: i.snippet.description || "",
           }));
           return NextResponse.json(
             { results: videos, live: true },
-            { headers: DEPLOYMENT_RESPONSE_HEADERS }
+            { headers: responseHeaders }
           );
         }
       } catch {
@@ -243,36 +189,26 @@ export async function GET(request: NextRequest) {
     }
 
     const trendingType = page === 1 ? "Music" : page === 2 ? "Default" : "Gaming";
-    for (const base of PROVIDER_BASES) {
-      try {
-        const res = await fetch(`${base}/api/v1/trending?type=${trendingType}`, {
-          headers: SERVER_FETCH_HEADERS,
-          signal: AbortSignal.timeout(4000),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data) && data.length > 0) {
-            const rawItems = data as ProviderItem[];
-            const videos = rawItems
-              .filter((i) => Boolean(i.videoId))
-              .slice(0, 20)
-              .map(normalizeProviderItem);
+    const trending = await fetchInvidiousJson<ProviderItem[]>(`/api/v1/trending?type=${trendingType}`, {
+      timeoutMs: 4000,
+      accept: (d) => Array.isArray(d) && d.length > 0,
+    });
+    if (trending) {
+      const videos = trending.data
+        .filter((i) => Boolean(i.videoId))
+        .slice(0, 20)
+        .map(normalizeProviderItem);
 
-            if (videos.length > 0) {
-              return NextResponse.json(
-                {
-                  results: videos,
-                  live: true,
-                  page,
-                  hasMore: page < 4,
-                },
-                { headers: DEPLOYMENT_RESPONSE_HEADERS }
-              );
-            }
-          }
-        }
-      } catch {
-        // try next provider
+      if (videos.length > 0) {
+        return NextResponse.json(
+          {
+            results: videos,
+            live: true,
+            page,
+            hasMore: page < 4,
+          },
+          { headers: responseHeaders }
+        );
       }
     }
 
@@ -287,50 +223,64 @@ export async function GET(request: NextRequest) {
         page,
         hasMore: startIndex + pageSize < XYZ_CATALOG_VIDEOS.length,
       },
-      { headers: DEPLOYMENT_RESPONSE_HEADERS }
+      { headers: responseHeaders }
     );
   }
 
   // 3. Related / Up Next Recommendations for a Video
   if (related) {
-    for (const base of PROVIDER_BASES) {
-      try {
-        const res = await fetch(`${base}/api/v1/videos/${encodeURIComponent(related)}`, {
-          headers: SERVER_FETCH_HEADERS,
-          signal: AbortSignal.timeout(4000),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const recommended = data.recommendedVideos;
-          if (Array.isArray(recommended) && recommended.length > 0) {
-            const rawItems = recommended as ProviderItem[];
-            const videos = rawItems
-              .filter((i) => Boolean(i.videoId))
-              .slice(0, 20)
-              .map(normalizeProviderItem);
+    if (!/^[A-Za-z0-9_-]{11}$/.test(related)) {
+      return NextResponse.json({ error: "Invalid video ID" }, { status: 400 });
+    }
 
-            if (videos.length > 0) {
-              return NextResponse.json(
-                { results: videos, live: true },
-                { headers: DEPLOYMENT_RESPONSE_HEADERS }
-              );
-            }
-          }
-        }
-      } catch {
-        // try next provider
-      }
+    const details = await fetchInvidiousJson<{ recommendedVideos?: ProviderItem[] }>(
+      `/api/v1/videos/${related}`,
+      { timeoutMs: 4000, accept: (d) => Array.isArray((d as { recommendedVideos?: unknown })?.recommendedVideos) }
+    );
+    const videos = (details?.data.recommendedVideos ?? [])
+      .filter((i) => Boolean(i.videoId))
+      .slice(0, 20)
+      .map(normalizeProviderItem);
+
+    if (videos.length > 0) {
+      return NextResponse.json(
+        { results: videos, live: true },
+        { headers: responseHeaders }
+      );
     }
 
     const fallback = XYZ_CATALOG_VIDEOS.filter((v) => v.id !== related);
     return NextResponse.json(
       { results: fallback, live: false },
-      { headers: DEPLOYMENT_RESPONSE_HEADERS }
+      { headers: responseHeaders }
     );
   }
 
-  // 4. Universal Search
+  // 4. Universal Search. Without a personal key, Invidious goes first: YouTube Data API search.list
+  // is capped at 100 calls/day per project on the shared server key. With the user's own key, YouTube goes first.
   if (query) {
+    const invidiousSearch = async () => {
+      const search = await fetchInvidiousJson<ProviderItem[]>(
+        `/api/v1/search?q=${encodeURIComponent(query)}&page=${page}`,
+        { accept: (d) => Array.isArray(d) && d.length > 0 }
+      );
+      const searchVideos = (search?.data ?? [])
+        .filter((item) => item.type === "video" && Boolean(item.videoId))
+        .slice(0, 20)
+        .map(normalizeProviderItem);
+      return searchVideos.length > 0
+        ? NextResponse.json(
+            { results: searchVideos, live: true, page, hasMore: searchVideos.length >= 10 },
+            { headers: responseHeaders }
+          )
+        : null;
+    };
+
+    if (!userApiKey) {
+      const fromInvidious = await invidiousSearch();
+      if (fromInvidious) return fromInvidious;
+    }
+
     if (apiKey) {
       try {
         const searchEndpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=20&type=video&q=${encodeURIComponent(
@@ -391,14 +341,14 @@ export async function GET(request: NextRequest) {
                 : "",
               duration: det?.duration || "Video",
               category: "General",
-              thumbnailUrl: `/api/xyz?thumb=${vid}`,
+              thumbnailUrl: `/api/xyz/thumb/${vid}`,
               description: item.snippet?.description || "",
             };
           });
 
           return NextResponse.json(
             { results: liveVideos, live: true, page, hasMore: Boolean(apiData.nextPageToken) },
-            { headers: DEPLOYMENT_RESPONSE_HEADERS }
+            { headers: responseHeaders }
           );
         }
       } catch {
@@ -406,44 +356,9 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    for (const base of PROVIDER_BASES) {
-      try {
-        const res = await fetch(
-          `${base}/api/v1/search?q=${encodeURIComponent(query)}&page=${page}`,
-          {
-            headers: SERVER_FETCH_HEADERS,
-            signal: AbortSignal.timeout(4500),
-          }
-        );
-
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data) && data.length > 0) {
-            const rawItems = data as ProviderItem[];
-            const videos = rawItems
-              .filter(
-                (item): item is ProviderItem & { videoId: string; title: string } =>
-                  item.type === "video" && Boolean(item.videoId)
-              )
-              .slice(0, 20)
-              .map(normalizeProviderItem);
-
-            if (videos.length > 0) {
-              return NextResponse.json(
-                {
-                  results: videos,
-                  live: true,
-                  page,
-                  hasMore: videos.length >= 10,
-                },
-                { headers: DEPLOYMENT_RESPONSE_HEADERS }
-              );
-            }
-          }
-        }
-      } catch {
-        // Try next provider
-      }
+    if (userApiKey) {
+      const fromInvidious = await invidiousSearch();
+      if (fromInvidious) return fromInvidious;
     }
 
     const qLower = query.toLowerCase();
@@ -466,7 +381,7 @@ export async function GET(request: NextRequest) {
         hasMore: startIndex + pageSize < allMatched.length,
         hasApiKey: Boolean(apiKey),
       },
-      { headers: DEPLOYMENT_RESPONSE_HEADERS }
+      { headers: responseHeaders }
     );
   }
 
@@ -474,7 +389,7 @@ export async function GET(request: NextRequest) {
   if (!rawIdOrUrl) {
     return NextResponse.json(
       { error: "Missing 'id', 'url', 'q', 'feed', or 'suggest' parameter" },
-      { status: 400, headers: DEPLOYMENT_RESPONSE_HEADERS }
+      { status: 400, headers: responseHeaders }
     );
   }
 
@@ -482,7 +397,7 @@ export async function GET(request: NextRequest) {
   if (!parseResult.ok) {
     return NextResponse.json(
       { error: parseResult.error },
-      { status: 400, headers: DEPLOYMENT_RESPONSE_HEADERS }
+      { status: 400, headers: responseHeaders }
     );
   }
 
@@ -508,7 +423,7 @@ export async function GET(request: NextRequest) {
           title: data.title ?? known?.title ?? "Video",
           authorName: data.author_name ?? known?.channel ?? "Creator",
           authorUrl: data.author_url ?? known?.channelUrl ?? "",
-          thumbnailUrl: `/api/xyz?thumb=${videoId}`,
+          thumbnailUrl: `/api/xyz/thumb/${videoId}`,
           views: known?.views ?? "",
           uploadedAt: known?.uploadedAt ?? "",
           duration: known?.duration ?? "Video",
@@ -516,7 +431,7 @@ export async function GET(request: NextRequest) {
             known?.description ??
             (data.title ? `${data.title} by ${data.author_name || "Creator"}` : ""),
         },
-        { headers: DEPLOYMENT_RESPONSE_HEADERS }
+        { headers: responseHeaders }
       );
     }
   } catch {
@@ -542,7 +457,7 @@ export async function GET(request: NextRequest) {
               authorUrl: item.snippet?.channelId
                 ? `https://www.youtube.com/channel/${item.snippet.channelId}`
                 : "",
-              thumbnailUrl: `/api/xyz?thumb=${videoId}`,
+              thumbnailUrl: `/api/xyz/thumb/${videoId}`,
               views: item.statistics?.viewCount
                 ? `${parseInt(item.statistics.viewCount, 10).toLocaleString()} views`
                 : "",
@@ -552,7 +467,7 @@ export async function GET(request: NextRequest) {
               duration: parseDurationIso(item.contentDetails?.duration),
               description: item.snippet?.description || "",
             },
-            { headers: DEPLOYMENT_RESPONSE_HEADERS }
+            { headers: responseHeaders }
           );
         }
       }
@@ -562,34 +477,26 @@ export async function GET(request: NextRequest) {
   }
 
   // 3. Try Invidious provider bases
-  for (const base of PROVIDER_BASES) {
-    try {
-      const pRes = await fetch(`${base}/api/v1/videos/${encodeURIComponent(videoId)}`, {
-        headers: SERVER_FETCH_HEADERS,
-        signal: AbortSignal.timeout(3000),
-      });
-      if (pRes.ok) {
-        const pData = await pRes.json();
-        if (pData?.title) {
-          return NextResponse.json(
-            {
-              id: videoId,
-              title: pData.title,
-              authorName: pData.author || "Creator",
-              authorUrl: pData.authorUrl ? `https://www.youtube.com${pData.authorUrl}` : "",
-              thumbnailUrl: `/api/xyz?thumb=${videoId}`,
-              views: pData.viewCountText || (pData.viewCount ? `${pData.viewCount} views` : ""),
-              uploadedAt: pData.publishedText || "",
-              duration: formatDuration(pData.lengthSeconds),
-              description: pData.description || "",
-            },
-            { headers: DEPLOYMENT_RESPONSE_HEADERS }
-          );
-        }
-      }
-    } catch {
-      // try next provider
-    }
+  const provider = await fetchInvidiousJson<ProviderItem & { authorUrl?: string }>(
+    `/api/v1/videos/${videoId}`,
+    { timeoutMs: 3000, accept: (d) => Boolean((d as ProviderItem)?.title) }
+  );
+  if (provider) {
+    const pData = provider.data;
+    return NextResponse.json(
+      {
+        id: videoId,
+        title: pData.title,
+        authorName: pData.author || "Creator",
+        authorUrl: pData.authorUrl ? `https://www.youtube.com${pData.authorUrl}` : "",
+        thumbnailUrl: `/api/xyz/thumb/${videoId}`,
+        views: pData.viewCountText || (pData.viewCount ? `${pData.viewCount} views` : ""),
+        uploadedAt: pData.publishedText || "",
+        duration: formatDuration(pData.lengthSeconds),
+        description: pData.description || "",
+      },
+      { headers: responseHeaders }
+    );
   }
 
   // 4. Try known catalog video
@@ -606,7 +513,7 @@ export async function GET(request: NextRequest) {
         duration: known.duration,
         description: known.description,
       },
-      { headers: DEPLOYMENT_RESPONSE_HEADERS }
+      { headers: responseHeaders }
     );
   }
 
@@ -617,12 +524,12 @@ export async function GET(request: NextRequest) {
       title: "YouTube Video",
       authorName: "Creator",
       authorUrl: `https://www.youtube.com/watch?v=${videoId}`,
-      thumbnailUrl: `/api/xyz?thumb=${videoId}`,
+      thumbnailUrl: `/api/xyz/thumb/${videoId}`,
       views: "",
       uploadedAt: "",
       duration: "Video",
       description: "",
     },
-    { headers: DEPLOYMENT_RESPONSE_HEADERS }
+    { headers: responseHeaders }
   );
 }

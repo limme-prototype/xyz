@@ -20,30 +20,37 @@
     --destructive-foreground: #fafafa;
     --border: #e4e4e7;
     --input: #e4e4e7;
-    --ring: #18181b;
+    --ring: #065fd4;
     --radius: 0.5rem;
+    --brand: #ff0033;
+    --link: #065fd4;
+    --input-bg: #ffffff;
   }
 
+  /* xyz: graphite-plum night with a single aurora-cyan signal for "live" things. */
   .dark {
-    --background: #09090b;
-    --foreground: #fafafa;
-    --card: #09090b;
-    --card-foreground: #fafafa;
-    --popover: #09090b;
-    --popover-foreground: #fafafa;
-    --primary: #fafafa;
-    --primary-foreground: #18181b;
-    --secondary: #27272a;
-    --secondary-foreground: #fafafa;
-    --muted: #27272a;
-    --muted-foreground: #a1a1aa;
-    --accent: #27272a;
-    --accent-foreground: #fafafa;
+    --background: #16131a;
+    --foreground: #f3eef5;
+    --card: #16131a;
+    --card-foreground: #f3eef5;
+    --popover: #221e27;
+    --popover-foreground: #f3eef5;
+    --primary: #5ce1e6;
+    --primary-foreground: #0e2a2c;
+    --secondary: #221e27;
+    --secondary-foreground: #f3eef5;
+    --muted: #2c2733;
+    --muted-foreground: #a59cad;
+    --accent: #2c2733;
+    --accent-foreground: #f3eef5;
     --destructive: #7f1d1d;
     --destructive-foreground: #fafafa;
-    --border: #27272a;
-    --input: #27272a;
-    --ring: #d4d4d8;
+    --border: #332d3a;
+    --input: #332d3a;
+    --ring: #5ce1e6;
+    --brand: #5ce1e6;
+    --link: #8fe9ec;
+    --input-bg: #1c1921;
   }
 }
 
@@ -67,6 +74,11 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-link: var(--link);
+  --color-input-bg: var(--input-bg);
+  --font-sans: var(--font-instrument), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-bricolage), var(--font-instrument), ui-sans-serif, sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -80,6 +92,25 @@
   body {
     background-color: var(--background);
     color: var(--foreground);
+    font-family: var(--font-sans);
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  @keyframes eq {
+    0%, 100% { transform: scaleY(0.35); }
+    50% { transform: scaleY(1); }
+  }
+  .eq-bar {
+    transform-origin: bottom;
+    animation: eq 0.9s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
