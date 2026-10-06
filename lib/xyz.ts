@@ -10,7 +10,7 @@ export interface XyzVideo {
   views: string;
   uploadedAt: string;
   duration: string;
-  category: "Music" | "Coding" | "Lo-Fi" | "Tech" | "Science" | "Gaming" | "Entertainment";
+  category: "Music" | "Coding" | "Lo-Fi" | "Tech" | "Science" | "Gaming" | "Entertainment" | "General";
   thumbnailUrl: string;
   description: string;
 }
@@ -41,7 +41,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "15 years ago",
     duration: "3:33",
     category: "Music",
-    thumbnailUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=dQw4w9WgXcQ",
     description: "The official video for 'Never Gonna Give You Up' by Rick Astley. Restored in stunning 4K clarity.",
   },
   {
@@ -53,7 +53,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "2 years ago",
     duration: "3:58",
     category: "Music",
-    thumbnailUrl: "https://i.ytimg.com/vi/G9rJC-cD_hk/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=G9rJC-cD_hk",
     description: "Tena - បងក្រ (Bong Kro) feat. YCN Rakhie. Official music video by Tena Khimphun.",
   },
   {
@@ -65,7 +65,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "1 year ago",
     duration: "4:12",
     category: "Music",
-    thumbnailUrl: "https://i.ytimg.com/vi/ABY94Ch2nVs/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=ABY94Ch2nVs",
     description: "Tena - Steav Khet ft Van Chesda, Glomyy Vincent. Official music video.",
   },
   {
@@ -77,7 +77,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "3 years ago",
     duration: "4:36",
     category: "Music",
-    thumbnailUrl: "https://i.ytimg.com/vi/rvje5oblrLw/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=rvje5oblrLw",
     description: "VannDa - Time To Rise featuring Master Kong Nay. Official music video produced by Baramey Production.",
   },
   {
@@ -89,7 +89,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "3 years ago",
     duration: "25:41",
     category: "Entertainment",
-    thumbnailUrl: "https://i.ytimg.com/vi/0e3GPea1Tyg/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=0e3GPea1Tyg",
     description: "Real life Squid Game with 456 people competing for $456,000! Every set recreated in real life.",
   },
   {
@@ -101,7 +101,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "Streamed live",
     duration: "LIVE",
     category: "Lo-Fi",
-    thumbnailUrl: "https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=jfKfPfyJRdk",
     description: "Peaceful lofi hip hop radio beats to relax, study, and focus to 24/7.",
   },
   {
@@ -113,7 +113,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "2 years ago",
     duration: "2:24",
     category: "Coding",
-    thumbnailUrl: "https://i.ytimg.com/vi/cuHDQhDhvPE/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=cuHDQhDhvPE",
     description: "Next.js is a full-stack React framework that makes building web applications fast and easy.",
   },
   {
@@ -125,7 +125,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "1 year ago",
     duration: "37:50",
     category: "Tech",
-    thumbnailUrl: "https://i.ytimg.com/vi/U9t-slLl30E/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=U9t-slLl30E",
     description: "Apple Vision Pro is here. The good, the bad, and everything in between reviewed by MKBHD.",
   },
   {
@@ -137,7 +137,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "5 years ago",
     duration: "1:00:15",
     category: "Coding",
-    thumbnailUrl: "https://i.ytimg.com/vi/kqtD5dpn9C8/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=kqtD5dpn9C8",
     description: "Python tutorial for beginners - Learn Python for machine learning and web development.",
   },
   {
@@ -149,7 +149,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "3 years ago",
     duration: "22:08",
     category: "Science",
-    thumbnailUrl: "https://i.ytimg.com/vi/bHIhgxav9LY/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=bHIhgxav9LY",
     description: "The Collatz Conjecture is the simplest math problem that no one can solve.",
   },
   {
@@ -161,7 +161,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "7 years ago",
     duration: "4:41",
     category: "Music",
-    thumbnailUrl: "https://i.ytimg.com/vi/kJQP7kiw5Fk/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=kJQP7kiw5Fk",
     description: "Luis Fonsi - Despacito featuring Daddy Yankee. Official music video.",
   },
   {
@@ -173,7 +173,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "7 years ago",
     duration: "4:23",
     category: "Music",
-    thumbnailUrl: "https://i.ytimg.com/vi/JGwWNGJdvx8/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=JGwWNGJdvx8",
     description: "The official music video for Ed Sheeran - Shape of You.",
   },
   {
@@ -185,7 +185,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "2 years ago",
     duration: "10:37",
     category: "Science",
-    thumbnailUrl: "https://i.ytimg.com/vi/h6fcK_fRYaI/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=h6fcK_fRYaI",
     description: "What will the last day of humanity look like? A science animation by Kurzgesagt.",
   },
   {
@@ -197,7 +197,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "2 years ago",
     duration: "5:12",
     category: "Science",
-    thumbnailUrl: "https://i.ytimg.com/vi/21X5lGlDOfg/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=21X5lGlDOfg",
     description: "NASA's James Webb Space Telescope reveals the deepest and sharpest infrared image of the distant universe.",
   },
   {
@@ -209,7 +209,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "7 years ago",
     duration: "3:36",
     category: "Music",
-    thumbnailUrl: "https://i.ytimg.com/vi/7wtfhZwyrcc/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=7wtfhZwyrcc",
     description: "Official music video for Believer by Imagine Dragons.",
   },
   {
@@ -221,7 +221,7 @@ export const XYZ_CATALOG_VIDEOS: XyzVideo[] = [
     uploadedAt: "5 years ago",
     duration: "16:20",
     category: "Gaming",
-    thumbnailUrl: "https://i.ytimg.com/vi/6bapv24Zz1E/hqdefault.jpg",
+    thumbnailUrl: "/api/xyz?thumb=6bapv24Zz1E",
     description: "PewDiePie begins his legendary Minecraft survival series. Building the first shelter and exploring the world.",
   },
 ];
@@ -273,7 +273,7 @@ export function parseXyzUrl(input: string): ParseResult {
   return { ok: true, videoId: candidate };
 }
 
-export function getXyzEmbedUrl(videoId: string, autoplay = false): string {
+export function getXyzEmbedUrl(videoId: string, autoplay = false, origin?: string): string {
   if (!VIDEO_ID.test(videoId)) throw new Error("Invalid video ID");
   const params = new URLSearchParams({
     autoplay: autoplay ? "1" : "0",
@@ -282,6 +282,9 @@ export function getXyzEmbedUrl(videoId: string, autoplay = false): string {
     rel: "0",
     enablejsapi: "1",
   });
+  if (origin) {
+    params.set("origin", origin);
+  }
   return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
 }
 

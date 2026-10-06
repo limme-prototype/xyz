@@ -1,5 +1,16 @@
+import dns from "node:dns";
 import { NextRequest, NextResponse } from "next/server";
-import { XYZ_CATALOG_VIDEOS, parseXyzUrl } from "@/lib/xyz";
+import { XYZ_CATALOG_VIDEOS, XyzVideo, parseXyzUrl } from "@/lib/xyz";
+
+try {
+  dns.setDefaultResultOrder?.("ipv4first");
+} catch {
+  // ignore in runtimes without node:dns
+}
+
+interface ThumbnailItem {
+  url?: string;
+}
 
 interface ProviderItem {
   type?: string;
@@ -12,17 +23,20 @@ interface ProviderItem {
   publishedText?: string;
   lengthSeconds?: number;
   description?: string;
+  videoThumbnails?: ThumbnailItem[];
 }
 
-const SEARCH_PROVIDERS = [
-  "https://invidious.f5.si/api/v1/search",
-  "https://inv.nadeko.net/api/v1/search",
-  "https://invidious.nerdvpn.de/api/v1/search",
+const PROVIDER_BASES = [
+  "https://invidious.f5.si",
+  "https://inv.nadeko.net",
+  "https://invidious.nerdvpn.de",
+  "https://yewtu.be",
 ];
 
 const SERVER_FETCH_HEADERS = {
   "Accept": "application/json",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
 };
 
 const DEPLOYMENT_RESPONSE_HEADERS = {
@@ -30,13 +44,114 @@ const DEPLOYMENT_RESPONSE_HEADERS = {
   "X-Content-Type-Options": "nosniff",
 };
 
+function formatDuration(totalSec?: number): string {
+  if (typeof totalSec !== "number" || totalSec <= 0) return "Video";
+  const m = Math.floor(totalSec / 60);
+  const s = String(totalSec % 60).padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+function parseDurationIso(iso?: string): string {
+  if (!iso) return "Video";
+  const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!match) return "Video";
+  const hours = parseInt(match[1] || "0", 10);
+  const minutes = parseInt(match[2] || "0", 10);
+  const seconds = parseInt(match[3] || "0", 10);
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function normalizeProviderItem(item: ProviderItem): XyzVideo {
+  const duration = formatDuration(item.lengthSeconds);
+  const videoId = item.videoId || "";
+  const thumb = videoId
+    ? `/api/xyz?thumb=${videoId}`
+    : (item.videoThumbnails?.[0]?.url || "");
+
+  return {
+    id: videoId,
+    title: item.title || "",
+    channel: item.author || "Creator",
+    channelUrl: item.authorUrl ? `https://www.youtube.com${item.authorUrl}` : "",
+    views: item.viewCountText || (item.viewCount ? `${item.viewCount} views` : ""),
+    uploadedAt: item.publishedText || "",
+    duration,
+    category: "General",
+    thumbnailUrl: thumb,
+    description: item.description || "",
+  };
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
+  const thumb = searchParams.get("thumb")?.trim();
   const suggest = searchParams.get("suggest")?.trim();
+  const feed = searchParams.get("feed")?.trim();
+  const related = searchParams.get("related")?.trim();
   const query = searchParams.get("q")?.trim();
   const rawIdOrUrl = searchParams.get("id") ?? searchParams.get("url");
 
-  // 1. Live Autocomplete Suggestions (using standard chrome provider without yt client params)
+  const apiKey = searchParams.get("key")?.trim() || process.env.XYZ_API_KEY;
+
+  // 0. Server-Proxied Thumbnail with Deployment Headers & Aggressive Caching
+  if (thumb) {
+    if (!/^[A-Za-z0-9_-]{11}$/.test(thumb)) {
+      return new NextResponse("Invalid video ID", { status: 400 });
+    }
+
+    const candidateUrls = [
+      `https://invidious.nerdvpn.de/vi/${thumb}/mqdefault.jpg`,
+      `https://inv.nadeko.net/vi/${thumb}/mqdefault.jpg`,
+      `https://i.ytimg.com/vi/${thumb}/mqdefault.jpg`,
+      `https://img.youtube.com/vi/${thumb}/mqdefault.jpg`,
+    ];
+
+    for (const url of candidateUrls) {
+      try {
+        const imgRes = await fetch(url, {
+          headers: {
+            "User-Agent": SERVER_FETCH_HEADERS["User-Agent"],
+            Accept:
+              "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+          },
+          signal: AbortSignal.timeout(2500),
+        });
+
+        if (imgRes.ok) {
+          const contentType = imgRes.headers.get("content-type") || "image/jpeg";
+          const buffer = await imgRes.arrayBuffer();
+          return new NextResponse(buffer, {
+            status: 200,
+            headers: {
+              "Content-Type": contentType,
+              "Cache-Control":
+                "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400",
+              "X-Content-Type-Options": "nosniff",
+            },
+          });
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+
+    // High quality SVG fallback placeholder if upstream CDN unreachable
+    const fallbackSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180" fill="none"><rect width="320" height="180" fill="#18181b"/><path d="M140 70L190 90L140 110V70Z" fill="#71717a"/><text x="160" y="145" text-anchor="middle" fill="#71717a" font-family="system-ui, -apple-system, sans-serif" font-size="12">xyz</text></svg>`;
+
+    return new NextResponse(fallbackSvg, {
+      status: 200,
+      headers: {
+        "Content-Type": "image/svg+xml",
+        "Cache-Control": "public, max-age=86400",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  }
+
+  // 1. Live Autocomplete Suggestions
   if (suggest) {
     try {
       const suggestUrl = `https://suggestqueries.google.com/complete/search?client=chrome&q=${encodeURIComponent(
@@ -59,9 +174,10 @@ export async function GET(request: NextRequest) {
         );
       }
     } catch {
-      const fallback = XYZ_CATALOG_VIDEOS.filter((v) =>
-        v.title.toLowerCase().includes(suggest.toLowerCase()) ||
-        v.channel.toLowerCase().includes(suggest.toLowerCase())
+      const fallback = XYZ_CATALOG_VIDEOS.filter(
+        (v) =>
+          v.title.toLowerCase().includes(suggest.toLowerCase()) ||
+          v.channel.toLowerCase().includes(suggest.toLowerCase())
       ).map((v) => v.title);
       return NextResponse.json(
         { suggestions: fallback.slice(0, 5) },
@@ -74,13 +190,114 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // 2. Real-time Search query (Full live search list across all videos)
-  if (query) {
-    const apiKey =
-      searchParams.get("key")?.trim() ||
-      process.env.XYZ_API_KEY;
+  // 2. Feed: Real-time Trending
+  if (feed === "trending") {
+    if (apiKey) {
+      try {
+        const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&chart=mostPopular&maxResults=20&key=${apiKey}`;
+        const res = await fetch(url, {
+          headers: SERVER_FETCH_HEADERS,
+          signal: AbortSignal.timeout(4500),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const videos: XyzVideo[] = (data.items || []).map((i: any) => ({
+            id: i.id,
+            title: i.snippet.title,
+            channel: i.snippet.channelTitle,
+            channelUrl: `https://www.youtube.com/channel/${i.snippet.channelId}`,
+            views: i.statistics?.viewCount ? `${i.statistics.viewCount} views` : "Trending",
+            uploadedAt: new Date(i.snippet.publishedAt).toLocaleDateString(),
+            duration: parseDurationIso(i.contentDetails?.duration),
+            category: "General",
+            thumbnailUrl: `/api/xyz?thumb=${i.id}`,
+            description: i.snippet.description || "",
+          }));
+          return NextResponse.json(
+            { results: videos, live: true },
+            { headers: DEPLOYMENT_RESPONSE_HEADERS }
+          );
+        }
+      } catch {
+        // fallback to providers below
+      }
+    }
 
-    // A. If custom API key is provided, query official API
+    for (const base of PROVIDER_BASES) {
+      try {
+        const res = await fetch(`${base}/api/v1/trending?type=Music`, {
+          headers: SERVER_FETCH_HEADERS,
+          signal: AbortSignal.timeout(4000),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const rawItems = data as ProviderItem[];
+            const videos = rawItems
+              .filter((i) => Boolean(i.videoId))
+              .slice(0, 20)
+              .map(normalizeProviderItem);
+
+            if (videos.length > 0) {
+              return NextResponse.json(
+                { results: videos, live: true },
+                { headers: DEPLOYMENT_RESPONSE_HEADERS }
+              );
+            }
+          }
+        }
+      } catch {
+        // try next provider
+      }
+    }
+
+    return NextResponse.json(
+      { results: XYZ_CATALOG_VIDEOS, live: false },
+      { headers: DEPLOYMENT_RESPONSE_HEADERS }
+    );
+  }
+
+  // 3. Related / Up Next Recommendations for a Video
+  if (related) {
+    for (const base of PROVIDER_BASES) {
+      try {
+        const res = await fetch(`${base}/api/v1/videos/${encodeURIComponent(related)}`, {
+          headers: SERVER_FETCH_HEADERS,
+          signal: AbortSignal.timeout(4000),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const recommended = data.recommendedVideos;
+          if (Array.isArray(recommended) && recommended.length > 0) {
+            const rawItems = recommended as ProviderItem[];
+            const videos = rawItems
+              .filter((i) => Boolean(i.videoId))
+              .slice(0, 20)
+              .map(normalizeProviderItem);
+
+            if (videos.length > 0) {
+              return NextResponse.json(
+                { results: videos, live: true },
+                { headers: DEPLOYMENT_RESPONSE_HEADERS }
+              );
+            }
+          }
+        }
+      } catch {
+        // try next provider
+      }
+    }
+
+    const fallback = XYZ_CATALOG_VIDEOS.filter((v) => v.id !== related);
+    return NextResponse.json(
+      { results: fallback, live: false },
+      { headers: DEPLOYMENT_RESPONSE_HEADERS }
+    );
+  }
+
+  // 4. Universal Search
+  if (query) {
     if (apiKey) {
       try {
         const searchEndpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=20&type=video&q=${encodeURIComponent(
@@ -102,11 +319,8 @@ export async function GET(request: NextRequest) {
             uploadedAt: new Date(item.snippet.publishedAt).toLocaleDateString(),
             duration: "Video",
             category: "General",
-            thumbnailUrl:
-              item.snippet.thumbnails?.high?.url ||
-              item.snippet.thumbnails?.medium?.url ||
-              `https://i.ytimg.com/vi/${item.id.videoId}/hqdefault.jpg`,
-            description: item.snippet.description,
+            thumbnailUrl: `/api/xyz?thumb=${item.id.videoId}`,
+            description: item.snippet.description || "",
           }));
           return NextResponse.json(
             { results: liveVideos, live: true },
@@ -118,10 +332,9 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // B. Live Universal Search via fast providers (no API key required)
-    for (const providerUrl of SEARCH_PROVIDERS) {
+    for (const base of PROVIDER_BASES) {
       try {
-        const res = await fetch(`${providerUrl}?q=${encodeURIComponent(query)}`, {
+        const res = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(query)}`, {
           headers: SERVER_FETCH_HEADERS,
           signal: AbortSignal.timeout(4500),
         });
@@ -131,27 +344,12 @@ export async function GET(request: NextRequest) {
           if (Array.isArray(data) && data.length > 0) {
             const rawItems = data as ProviderItem[];
             const videos = rawItems
-              .filter((item): item is ProviderItem & { videoId: string; title: string } => item.type === "video" && Boolean(item.videoId))
+              .filter(
+                (item): item is ProviderItem & { videoId: string; title: string } =>
+                  item.type === "video" && Boolean(item.videoId)
+              )
               .slice(0, 20)
-              .map((item) => {
-                const totalSec = typeof item.lengthSeconds === "number" ? item.lengthSeconds : 0;
-                const minutes = Math.floor(totalSec / 60);
-                const seconds = String(totalSec % 60).padStart(2, "0");
-                const duration = totalSec > 0 ? `${minutes}:${seconds}` : "Video";
-
-                return {
-                  id: item.videoId,
-                  title: item.title,
-                  channel: item.author || "Creator",
-                  channelUrl: item.authorUrl ? `https://www.youtube.com${item.authorUrl}` : "",
-                  views: item.viewCountText || (item.viewCount ? `${item.viewCount} views` : "Popular"),
-                  uploadedAt: item.publishedText || "Recent",
-                  duration,
-                  category: "General",
-                  thumbnailUrl: `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`,
-                  description: item.description || `${item.title} by ${item.author || "Creator"}`,
-                };
-              });
+              .map(normalizeProviderItem);
 
             if (videos.length > 0) {
               return NextResponse.json(
@@ -166,7 +364,6 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // C. Fallback: Search local catalog
     const qLower = query.toLowerCase();
     const results = XYZ_CATALOG_VIDEOS.filter(
       (video) =>
@@ -186,10 +383,10 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // 3. Single Video Metadata Resolution
+  // 5. Single Video Metadata
   if (!rawIdOrUrl) {
     return NextResponse.json(
-      { error: "Missing 'id', 'url', 'q', or 'suggest' parameter" },
+      { error: "Missing 'id', 'url', 'q', 'feed', or 'suggest' parameter" },
       { status: 400, headers: DEPLOYMENT_RESPONSE_HEADERS }
     );
   }
@@ -246,10 +443,7 @@ export async function GET(request: NextRequest) {
         title: data.title ?? known?.title ?? "Video",
         authorName: data.author_name ?? known?.channel ?? "Creator",
         authorUrl: data.author_url ?? known?.channelUrl ?? "",
-        thumbnailUrl:
-          data.thumbnail_url ??
-          known?.thumbnailUrl ??
-          `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        thumbnailUrl: `/api/xyz?thumb=${videoId}`,
         views: known?.views ?? "Featured",
         uploadedAt: known?.uploadedAt ?? "",
         duration: known?.duration ?? "Video",

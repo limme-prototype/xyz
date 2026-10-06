@@ -12,7 +12,17 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Search, X, Settings2, Copy, Check } from "lucide-react";
+import {
+  Search,
+  X,
+  Settings2,
+  Copy,
+  Check,
+  Minimize2,
+  Maximize2,
+  SkipForward,
+  Play,
+} from "lucide-react";
 
 interface VideoMeta {
   id: string;
@@ -51,7 +61,9 @@ export function XyzPlayer() {
   const [isSuggestOpen, setIsSuggestOpen] = useState(false);
   const [searchResults, setSearchResults] = useState<XyzVideo[] | null>(null);
   const [searchQueryLabel, setSearchQueryLabel] = useState<string>("");
-  const [autoplay, setAutoplay] = useState(false);
+  const [autoplay, setAutoplay] = useState(true);
+  const [isAutoplay, setIsAutoplay] = useState(true);
+  const [isMinimized, setIsMinimized] = useState(false);
   const [copied, setCopied] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -69,30 +81,123 @@ export function XyzPlayer() {
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const playerRef = useRef<any>(null);
+
+  // Keep refs updated to prevent stale closures in event listeners
+  const isAutoplayRef = useRef(isAutoplay);
+  useEffect(() => {
+    isAutoplayRef.current = isAutoplay;
+  }, [isAutoplay]);
+
+  const activeVideoIdRef = useRef(activeVideoId);
+  useEffect(() => {
+    activeVideoIdRef.current = activeVideoId;
+  }, [activeVideoId]);
+
+  const displayedVideos = searchResults ?? XYZ_CATALOG_VIDEOS;
+  const displayedVideosRef = useRef(displayedVideos);
+  useEffect(() => {
+    displayedVideosRef.current = displayedVideos;
+  }, [displayedVideos]);
 
   function showToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(null), 2200);
   }
 
-  // Keyboard shortcut: '/' to focus search, 'Escape' to dismiss suggestions
+  function sendPlayerCommand(func: string, args: unknown[] = []) {
+    try {
+      iframeRef.current?.contentWindow?.postMessage(
+        JSON.stringify({
+          event: "command",
+          func,
+          args,
+        }),
+        "*"
+      );
+    } catch {
+      // ignore
+    }
+  }
+
+  function playNextVideo() {
+    const list = displayedVideosRef.current;
+    if (!list.length) return;
+    const currentIndex = list.findIndex((v) => v.id === activeVideoIdRef.current);
+    const nextIndex =
+      currentIndex >= 0 && currentIndex + 1 < list.length ? currentIndex + 1 : 0;
+    const nextVideo = list[nextIndex];
+    if (nextVideo) {
+      handleSelectVideo(nextVideo);
+      showToast(`Playing next: ${nextVideo.title}`);
+    }
+  }
+
+  const playNextVideoRef = useRef(playNextVideo);
+  useEffect(() => {
+    playNextVideoRef.current = playNextVideo;
+  });
+
+  function handleSelectVideo(video: XyzVideo) {
+    setActiveVideoId(video.id);
+    setMeta({
+      id: video.id,
+      title: video.title,
+      authorName: video.channel,
+      authorUrl: video.channelUrl,
+      thumbnailUrl: video.thumbnailUrl,
+      duration: video.duration,
+      description: video.description,
+    });
+    setError("");
+    setAutoplay(true);
+
+    // If player instance is already loaded, seamlessly advance without recreating iframe
+    if (playerRef.current?.loadVideoById) {
+      try {
+        playerRef.current.loadVideoById(video.id);
+      } catch {
+        // fallback
+      }
+    } else {
+      setTimeout(() => {
+        sendPlayerCommand("loadVideoById", [video.id]);
+        sendPlayerCommand("playVideo");
+      }, 100);
+    }
+
+    if (typeof window !== "undefined" && !isMinimized) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  // Keyboard shortcut: '/' to focus search, 'Escape' to dismiss, 'm' to toggle minimize
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (
-        e.key === "/" &&
-        document.activeElement !== searchInputRef.current &&
-        !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName || "")
-      ) {
+      const isInput = ["INPUT", "TEXTAREA"].includes(
+        document.activeElement?.tagName || ""
+      );
+
+      if (e.key === "/" && !isInput) {
         e.preventDefault();
         searchInputRef.current?.focus();
       } else if (e.key === "Escape") {
-        setIsSuggestOpen(false);
-        searchInputRef.current?.blur();
+        if (isSuggestOpen) {
+          setIsSuggestOpen(false);
+          searchInputRef.current?.blur();
+        } else if (isMinimized) {
+          setIsMinimized(false);
+        }
+      } else if (e.key.toLowerCase() === "m" && !isInput) {
+        e.preventDefault();
+        setIsMinimized((prev) => !prev);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [isSuggestOpen, isMinimized]);
 
   // Close suggestions when clicking outside
   useEffect(() => {
@@ -163,24 +268,140 @@ export function XyzPlayer() {
     };
   }, [activeVideoId]);
 
-  function handleSelectVideo(video: XyzVideo) {
-    setActiveVideoId(video.id);
-    setMeta({
-      id: video.id,
-      title: video.title,
-      authorName: video.channel,
-      authorUrl: video.channelUrl,
-      thumbnailUrl: video.thumbnailUrl,
-      duration: video.duration,
-      description: video.description,
-    });
-    setError("");
-    setAutoplay(true);
+  // Load live recommendations dynamically for the current track
+  useEffect(() => {
+    let ignore = false;
 
-    if (typeof window !== "undefined") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
+    if (!searchQueryLabel) {
+      fetch(`/api/xyz?related=${activeVideoId}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!ignore && data?.results?.length) {
+            setSearchResults(data.results);
+          }
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      ignore = true;
+    };
+  }, [activeVideoId, searchQueryLabel]);
+
+  // Dual-layer Autoplay Detection: postMessage listener for ended events
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      try {
+        const data =
+          typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+
+        // 1. onStateChange event: info 0 = ENDED
+        if (data?.event === "onStateChange" && data?.info === 0) {
+          if (isAutoplayRef.current) {
+            playNextVideoRef.current();
+          }
+        }
+
+        // 2. infoDelivery event: playerState 0 = ENDED
+        if (data?.event === "infoDelivery" && data?.info?.playerState === 0) {
+          if (isAutoplayRef.current) {
+            playNextVideoRef.current();
+          }
+        }
+      } catch {
+        // ignore non-json messages
+      }
+    }
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
+  // IFrame load handshake to start playback & subscribe to events
+  function handleIframeLoad() {
+    sendPlayerCommand("listening");
+    sendPlayerCommand("addEventListener", ["onStateChange"]);
+    sendPlayerCommand("addEventListener", ["infoDelivery"]);
+
+    if (autoplay || isAutoplayRef.current) {
+      setTimeout(() => {
+        sendPlayerCommand("playVideo");
+      }, 250);
     }
   }
+
+  // Load IFrame API script for native event handling
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!(window as any).YT) {
+      const existing = document.getElementById("xyz-iframe-api");
+      if (!existing) {
+        const tag = document.createElement("script");
+        tag.id = "xyz-iframe-api";
+        tag.src = "https://www.youtube.com/iframe_api";
+        const first = document.getElementsByTagName("script")[0];
+        first?.parentNode?.insertBefore(tag, first);
+      }
+    }
+  }, []);
+
+  // Attach native YT.Player to iframe if available
+  useEffect(() => {
+    let isMounted = true;
+
+    function setupPlayer() {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (!iframeRef.current || !(window as any).YT?.Player) return;
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        playerRef.current = new (window as any).YT.Player(iframeRef.current, {
+          events: {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            onReady: (event: any) => {
+              if (!isMounted) return;
+              if (autoplay || isAutoplayRef.current) {
+                try {
+                  event.target.playVideo();
+                } catch {
+                  // ignore
+                }
+              }
+            },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            onStateChange: (event: any) => {
+              if (!isMounted) return;
+              // 0 = YT.PlayerState.ENDED
+              if (event.data === 0 && isAutoplayRef.current) {
+                playNextVideoRef.current();
+              }
+            },
+          },
+        });
+      } catch {
+        // player might already be initialized
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((window as any).YT?.Player) {
+      setupPlayer();
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const prev = (window as any).onYouTubeIframeAPIReady;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).onYouTubeIframeAPIReady = () => {
+        if (prev) prev();
+        setupPlayer();
+      };
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeVideoId, autoplay]);
 
   async function executeSearch(query: string) {
     setIsSuggestOpen(false);
@@ -251,10 +472,21 @@ export function XyzPlayer() {
   }
 
   function clearSearchFilter() {
-    setSearchResults(null);
     setSearchQueryLabel("");
     setInputVal("");
     setError("");
+    fetch(`/api/xyz?feed=trending`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.results?.length) {
+          setSearchResults(data.results);
+        } else {
+          setSearchResults(null);
+        }
+      })
+      .catch(() => {
+        setSearchResults(null);
+      });
   }
 
   function handleCopyLink() {
@@ -287,8 +519,6 @@ export function XyzPlayer() {
     showToast(cleanKey ? "Key saved" : "Default search restored");
   }
 
-  const displayedVideos = searchResults ?? XYZ_CATALOG_VIDEOS;
-
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4">
       {/* 1. Simple Search Bar */}
@@ -299,7 +529,7 @@ export function XyzPlayer() {
             <Input
               ref={searchInputRef}
               type="text"
-              placeholder="Search or paste link..."
+              placeholder="Search or paste link... (press / to focus)"
               value={inputVal}
               onFocus={() => {
                 if (suggestions.length > 0) setIsSuggestOpen(true);
@@ -332,7 +562,7 @@ export function XyzPlayer() {
             )}
           </div>
 
-          <Button type="submit" size="sm" className="h-9 px-3.5">
+          <Button type="submit" size="sm" className="h-9 px-3.5 font-medium">
             Search
           </Button>
 
@@ -377,22 +607,103 @@ export function XyzPlayer() {
         )}
       </div>
 
-      {/* 2. Video Player Frame */}
+      {/* 2. Video Player Frame & Controls */}
       <div className="flex flex-col gap-3">
-        <div className="relative aspect-video w-full overflow-hidden rounded-md border border-border bg-black shadow-sm">
-          <iframe
-            key={activeVideoId}
-            className="h-full w-full border-0"
-            src={getXyzEmbedUrl(activeVideoId, autoplay)}
-            title={meta?.title ?? "Video"}
-            referrerPolicy="strict-origin-when-cross-origin"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowFullScreen
-          />
+        {/* Placeholder when minimized */}
+        {isMinimized ? (
+          <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-md border border-dashed border-border bg-muted/20 p-6 text-center">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Playing in corner mini-player</span>
+            </div>
+            <p className="max-w-md truncate text-sm font-medium text-foreground">
+              {meta?.title ?? "Video"}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsMinimized(false)}
+              className="h-8 gap-1.5 text-xs"
+            >
+              <Maximize2 className="size-3.5" />
+              <span>Restore to full screen</span>
+            </Button>
+          </div>
+        ) : null}
+
+        {/* Video Player Box (dockable when minimized) */}
+        <div
+          className={
+            isMinimized
+              ? "fixed bottom-5 right-5 z-50 flex w-72 sm:w-80 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl transition-all duration-200"
+              : "relative aspect-video w-full overflow-hidden rounded-md border border-border bg-black shadow-sm"
+          }
+        >
+          <div className="relative aspect-video w-full bg-black">
+            <iframe
+              ref={iframeRef}
+              key={activeVideoId}
+              onLoad={handleIframeLoad}
+              className="h-full w-full border-0"
+              src={getXyzEmbedUrl(activeVideoId, autoplay)}
+              title={meta?.title ?? "Video"}
+              referrerPolicy="strict-origin-when-cross-origin"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          </div>
+
+          {/* Mini-player dock bar */}
+          {isMinimized && (
+            <div className="flex items-center justify-between border-t border-border bg-card p-2.5">
+              <div className="flex min-w-0 flex-1 flex-col pr-2">
+                <p className="truncate text-xs font-medium text-foreground">
+                  {meta?.title}
+                </p>
+                <p className="truncate text-[10px] text-muted-foreground">
+                  {meta?.authorName}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                  onClick={playNextVideo}
+                  title="Next video"
+                >
+                  <SkipForward className="size-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                  onClick={() => setIsMinimized(false)}
+                  title="Restore player"
+                >
+                  <Maximize2 className="size-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                  onClick={() => setIsMinimized(false)}
+                  title="Close mini-player"
+                >
+                  <X className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Minimal info line */}
-        <div className="flex items-center justify-between gap-3 px-0.5">
+        {/* Minimal info & Action strip below video */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-0.5">
           <div className="flex flex-col min-w-0">
             <h1 className="truncate text-sm font-medium text-foreground">
               {meta?.title ?? "Loading..."}
@@ -403,40 +714,109 @@ export function XyzPlayer() {
             </p>
           </div>
 
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleCopyLink}
-            className="h-7 gap-1.5 px-2.5 text-xs shrink-0"
-          >
-            {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-            <span>{copied ? "Copied" : "Copy link"}</span>
-          </Button>
+          {/* Action buttons: Next, Autoplay toggle, Minimize screen, Copy Link */}
+          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={playNextVideo}
+              className="h-7 gap-1 px-2 text-xs"
+              title="Play next video in queue"
+            >
+              <SkipForward className="size-3" />
+              <span>Next</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant={isAutoplay ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => {
+                const nextState = !isAutoplay;
+                setIsAutoplay(nextState);
+                showToast(nextState ? "Autoplay enabled" : "Autoplay paused");
+              }}
+              className="h-7 gap-1 px-2 text-xs"
+              title="Toggle automatic playback of next video"
+            >
+              <Play className={`size-3 ${isAutoplay ? "fill-current" : ""}`} />
+              <span>Autoplay: {isAutoplay ? "On" : "Off"}</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant={isMinimized ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => setIsMinimized(!isMinimized)}
+              className="h-7 gap-1 px-2 text-xs"
+              title="Minimize screen to corner (Press 'm')"
+            >
+              {isMinimized ? (
+                <Maximize2 className="size-3" />
+              ) : (
+                <Minimize2 className="size-3" />
+              )}
+              <span>{isMinimized ? "Restore" : "Minimize"}</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleCopyLink}
+              className="h-7 gap-1 px-2 text-xs"
+              title="Copy link"
+            >
+              {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+              <span>{copied ? "Copied" : "Copy"}</span>
+            </Button>
+          </div>
         </div>
       </div>
 
-      {/* 3. Simple List */}
+      {/* 3. Simple List (Queue / Search Results) */}
       <div className="flex flex-col gap-2 pt-2">
         <div className="flex items-center justify-between border-b border-border/40 pb-2">
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-foreground">
-              {searchQueryLabel ? `Results for "${searchQueryLabel}"` : "Queue"}
+              {searchQueryLabel ? `Results for "${searchQueryLabel}"` : "Up Next & Recommended"}
             </span>
             <span className="text-xs text-muted-foreground">
               ({displayedVideos.length})
             </span>
           </div>
 
-          {searchResults && (
+          <div className="flex items-center gap-2 text-xs">
             <button
               type="button"
-              onClick={clearSearchFilter}
-              className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+              onClick={() => {
+                setSearchQueryLabel("Trending");
+                fetch(`/api/xyz?feed=trending`)
+                  .then((res) => (res.ok ? res.json() : null))
+                  .then((data) => {
+                    if (data?.results?.length) {
+                      setSearchResults(data.results);
+                    }
+                  });
+              }}
+              className="text-muted-foreground hover:text-foreground cursor-pointer"
             >
-              Reset
+              Trending
             </button>
-          )}
+            {searchResults && (
+              <>
+                <span className="text-muted-foreground/30">&bull;</span>
+                <button
+                  type="button"
+                  onClick={clearSearchFilter}
+                  className="text-muted-foreground hover:text-foreground cursor-pointer"
+                >
+                  Reset
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="divide-y divide-border/40 rounded-md border border-border bg-card">
@@ -454,10 +834,17 @@ export function XyzPlayer() {
                 <div className="relative h-11 w-16 shrink-0 overflow-hidden rounded bg-muted">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={video.thumbnailUrl}
+                    src={video.thumbnailUrl || `/api/xyz?thumb=${video.id}`}
                     alt={video.title}
                     className="h-full w-full object-cover"
                     loading="lazy"
+                    onError={(e) => {
+                      const target = e.currentTarget as HTMLImageElement;
+                      if (!target.dataset.fallbackTried) {
+                        target.dataset.fallbackTried = "1";
+                        target.src = `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`;
+                      }
+                    }}
                   />
                 </div>
 
@@ -560,4 +947,3 @@ export function XyzPlayer() {
     </div>
   );
 }
-
