@@ -61,10 +61,11 @@ export const SECTIONS: Section[] = [
     source: { kind: "uploads", channelId: ARTISTS.hengPitou },
     fallback: { kind: "channels", channelIds: [ARTISTS.hengPitou] },
   },
-  { id: "music", label: "Music", source: { kind: "search", query: "music" } },
-  { id: "lofi", label: "Lo-fi", source: { kind: "search", query: "lofi hip hop" } },
-  { id: "coding", label: "Coding", source: { kind: "search", query: "programming tutorial" } },
-  { id: "gaming", label: "Gaming", source: { kind: "search", query: "gaming" } },
+  { id: "music", label: "Music", source: { kind: "search", query: "khmer and english hits songs" } },
+  { id: "learning", label: "Learning", source: { kind: "search", query: "learn english conversation programming" } },
+  { id: "coding", label: "Coding", source: { kind: "search", query: "programming tutorial full course" } },
+  { id: "science", label: "Science", source: { kind: "search", query: "veritasium science education" } },
+  { id: "lofi", label: "Lo-fi", source: { kind: "search", query: "lofi hip hop english khmer beats" } },
 ];
 
 export const DEFAULT_SECTION_ID = "all";

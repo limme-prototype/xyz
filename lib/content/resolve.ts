@@ -132,7 +132,7 @@ async function fromSearch(query: string) {
   });
   const items = (result?.data ?? [])
     .filter((i) => i.type === "video" && Boolean(i.videoId))
-    .slice(0, 30)
+    .slice(0, 36)
     .map((i) => ({ ...normalizeInvidiousVideo(i), description: cleanDescription(i.description ?? "") }));
   return { items, origin: "invidious" as const, nextPageToken: null };
 }

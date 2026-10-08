@@ -2,7 +2,7 @@
 
 import { VideoMeta } from "@/lib/types/player";
 import { Button } from "@/components/ui/button";
-import { SkipBack, SkipForward, Play, Pause, Maximize2 } from "lucide-react";
+import { SkipBack, SkipForward, Play, Pause, Maximize2, X } from "lucide-react";
 import { PlayerControls, type PlayerControlsProps } from "./player-controls";
 
 export interface StreamVideoEvents {
@@ -35,7 +35,10 @@ interface AmbientStageProps {
   onSkip: () => void;
   onIframeLoad: () => void;
   isMinimized: boolean;
+  isHidden?: boolean;
+  viewType?: "watch" | "home" | "search";
   onToggleMinimize: () => void;
+  onClose?: () => void;
   controls: PlayerControlsProps;
 }
 
@@ -52,13 +55,29 @@ export function AmbientStage({
   onSkip,
   onIframeLoad,
   isMinimized,
+  isHidden = false,
+  viewType = "watch",
   onToggleMinimize,
+  onClose,
   controls,
 }: AmbientStageProps) {
-  const { posterUrl, isPlaying, onTogglePlay, onNext, onPrev } = controls;
+  const { posterUrl, isPlaying, currentTime, duration, onTogglePlay, onNext, onPrev } = controls;
 
   return (
-    <div className="relative w-full select-none">
+    <div
+      className={
+        viewType !== "watch"
+          ? "contents select-none"
+          : "relative aspect-video w-full select-none"
+      }
+    >
+      {/* 0. Watch stage backdrop / placeholder when docked to mini player */}
+      {viewType === "watch" && isMinimized && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center rounded-xl border border-dashed border-border/50 bg-card/40 text-muted-foreground p-6 text-center select-none backdrop-blur-xs">
+          <p className="text-sm font-medium text-foreground/80">Playing in mini player</p>
+          <p className="text-xs text-muted-foreground mt-1">Click the expand button in the corner to restore</p>
+        </div>
+      )}
       {/* 1. Subtle ambient glow */}
       {posterUrl && !isMinimized && (
         <div
@@ -70,13 +89,14 @@ export function AmbientStage({
         </div>
       )}
 
+
       {/* 2. Stage: uncropped 16:9 surface + our own controls */}
       <div
         ref={stageRef}
-        className={`z-10 overflow-hidden border-border bg-black shadow-xl transition-all duration-300 ${
+        className={`${isHidden ? "hidden" : ""} overflow-hidden border-border bg-black shadow-2xl transition-[width,height,border-radius,box-shadow] duration-250 ease-out ${
           isMinimized
-            ? "fixed bottom-5 right-5 z-50 w-72 rounded-lg border shadow-2xl sm:w-84"
-            : "relative aspect-video w-full border-0 sm:rounded-xl sm:border"
+            ? "fixed bottom-5 left-5 z-50 w-80 max-w-[calc(100vw-2.5rem)] rounded-xl border border-border/80 shadow-2xl backdrop-blur animate-mini-in sm:w-88"
+            : "relative z-10 aspect-video w-full border-0 sm:rounded-xl sm:border"
         }`}
       >
         <div className={`relative w-full bg-black ${isMinimized ? "aspect-video" : "h-full"}`}>
@@ -136,44 +156,82 @@ export function AmbientStage({
           )}
         </div>
 
-        {/* 3. Minimized corner widget */}
+        {/* 3. Minimized YouTube-style bottom bar widget */}
         {isMinimized && (
-          <div className="flex items-center justify-between border-t border-border bg-card p-2">
-            <div className="flex min-w-0 flex-1 flex-col pr-2">
-              <span className="truncate text-xs font-medium text-foreground">{meta?.title}</span>
+          <div className="relative border-t border-border/80 bg-card/95 backdrop-blur-md">
+            {/* Slim playback progress bar */}
+            <div className="absolute top-0 left-0 right-0 h-0.5 bg-muted/40 overflow-hidden">
+              <div
+                className="h-full bg-primary transition-all duration-200"
+                style={{
+                  width: `${duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0}%`,
+                }}
+              />
             </div>
-            <div className="flex shrink-0 items-center gap-0.5">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={onPrev}
-                className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground"
-              >
-                <SkipBack className="size-3.5" />
-              </Button>
-              <Button type="button" variant="ghost" size="icon" onClick={onTogglePlay} className="h-7 w-7 rounded-full bg-foreground text-background hover:bg-foreground/90 hover:text-background">
-                {isPlaying ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={onNext}
-                className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground"
-              >
-                <SkipForward className="size-3.5" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={onToggleMinimize}
-                className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground"
-                title="Expand back to stage"
-              >
-                <Maximize2 className="size-3.5" />
-              </Button>
+
+            <div className="flex items-center justify-between p-2.5 pt-3">
+              <div className="flex min-w-0 flex-1 flex-col pr-2">
+                <span className="truncate text-xs font-semibold text-foreground leading-tight" title={meta?.title}>
+                  {meta?.title ?? "Playing"}
+                </span>
+                <span className="truncate text-[10px] text-muted-foreground mt-0.5">
+                  {meta?.authorName ? meta.authorName : isPlaying ? "Playing" : "Paused"}
+                </span>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={onPrev}
+                  className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground cursor-pointer"
+                  title="Previous"
+                >
+                  <SkipBack className="size-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={onTogglePlay}
+                  className="h-7 w-7 rounded-full bg-foreground text-background hover:bg-foreground/90 hover:text-background cursor-pointer"
+                  title={isPlaying ? "Pause" : "Play"}
+                >
+                  {isPlaying ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 fill-current ml-0.5" />}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={onNext}
+                  className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground cursor-pointer"
+                  title="Next"
+                >
+                  <SkipForward className="size-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={onToggleMinimize}
+                  className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground cursor-pointer"
+                  title="Expand back to stage"
+                >
+                  <Maximize2 className="size-3.5" />
+                </Button>
+                {onClose && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={onClose}
+                    className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground hover:bg-destructive/10 hover:text-destructive cursor-pointer"
+                    title="Close mini player"
+                  >
+                    <X className="size-3.5" />
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         )}

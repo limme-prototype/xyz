@@ -107,6 +107,29 @@
     transform-origin: bottom;
     animation: eq 0.9s ease-in-out infinite;
   }
+  @keyframes miniPlayerIn {
+    0% {
+      opacity: 0.85;
+      transform: translate3d(28px, -40px, 0) scale(1.08);
+      box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.7);
+    }
+    100% {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+  }
+  .animate-mini-in {
+    animation: miniPlayerIn 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    will-change: transform, opacity;
+  }
+  @keyframes fadeIn {
+    0% { opacity: 0; transform: translateY(4px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fadeIn {
+    animation: fadeIn 0.25s ease-out forwards;
+  }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;

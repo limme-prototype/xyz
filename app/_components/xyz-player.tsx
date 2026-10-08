@@ -19,7 +19,7 @@ import { preconnect } from "react-dom";
 import { SiteHeader, type SiteHeaderHandle } from "./site-header";
 import { AmbientStage } from "./ambient-stage";
 import { VideoDetails } from "./video-details";
-import { ChipBar, SearchResults, UpNextList } from "./video-list";
+import { ChipBar, HomeFeed, SearchResults, UpNextList } from "./video-list";
 import { DEFAULT_SECTION_ID } from "@/lib/content/sections";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -104,11 +104,15 @@ async function fetchVideos(url: string): Promise<XyzVideo[] | null> {
 
 interface XyzPlayerProps {
   initialVideoId?: string;
+  initialHasVideoQuery?: boolean;
 }
 
-type View = { type: "watch" } | { type: "search"; query: string; results: XyzVideo[]; loading: boolean };
+type View =
+  | { type: "home" }
+  | { type: "watch" }
+  | { type: "search"; query: string; results: XyzVideo[]; loading: boolean };
 
-export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID }: XyzPlayerProps) {
+export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQuery = true }: XyzPlayerProps) {
   useAudioKeepalive();
 
   // Consistent SSR & Client initial state using server-passed initialVideoId
@@ -117,6 +121,8 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID }: XyzPlayerProps)
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isAutoplay, setIsAutoplay] = useState<boolean>(true);
   const [isMinimized, setIsMinimized] = useState<boolean>(false);
+  const [isAutoMinimized, setIsAutoMinimized] = useState<boolean>(false);
+  const [isDismissed, setIsDismissed] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -125,7 +131,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID }: XyzPlayerProps)
   const [listLoading, setListLoading] = useState<boolean>(false);
   const [listNextPage, setListNextPage] = useState<string | null>(null);
   const [listLoadingMore, setListLoadingMore] = useState<boolean>(false);
-  const [view, setView] = useState<View>({ type: "watch" });
+  const [view, setView] = useState<View>(() => (initialHasVideoQuery ? { type: "watch" } : { type: "home" }));
 
   // Custom-controls playback state (fed by YouTube infoDelivery or <video> events)
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
@@ -152,6 +158,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID }: XyzPlayerProps)
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const stageContainerRef = useRef<HTMLDivElement>(null);
   const activeVideoIdRef = useRef(activeVideoId);
   const initialVideoIdRef = useRef(initialVideoId);
   const isAutoplayRef = useRef(isAutoplay);
@@ -174,6 +181,41 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID }: XyzPlayerProps)
   useEffect(() => {
     streamUrlStateRef.current = streamUrl;
   }, [streamUrl]);
+
+  const isDismissedRef = useRef(isDismissed);
+  useEffect(() => {
+    isDismissedRef.current = isDismissed;
+  }, [isDismissed]);
+
+  // Auto-minimize on scroll when the player container leaves viewport
+  useEffect(() => {
+    if (view.type !== "watch") return;
+    const el = stageContainerRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry) return;
+        // Trigger minimize only when the player has actually scrolled completely out of the viewport
+        if (!entry.isIntersecting && entry.boundingClientRect.top < 64) {
+          if (!isDismissedRef.current && (isPlaying || hasStarted)) {
+            setIsAutoMinimized(true);
+          }
+        } else if (entry.isIntersecting) {
+          // Scrolled back into view -> expand back and reset dismissed state
+          setIsAutoMinimized(false);
+          setIsDismissed(false);
+        }
+      },
+      {
+        rootMargin: "-64px 0px 0px 0px",
+        threshold: 0,
+      }
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isPlaying, hasStarted, view.type]);
 
   // The <video> element is the playback surface for HLS streams and for native (DASH) mode.
   const videoActive = Boolean(streamUrl) || playbackMode === "native";
@@ -343,6 +385,8 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID }: XyzPlayerProps)
       setActiveVideoId(id);
       activeVideoIdRef.current = id;
       setStreamUrl(null);
+      setIsDismissed(false);
+      setIsAutoMinimized(false);
       resetPlaybackState();
 
       if (typeof window !== "undefined") {
@@ -842,23 +886,56 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID }: XyzPlayerProps)
         ref={headerRef}
         onSearch={handleSearch}
         onOpenSettings={handleOpenSettings}
-        onHome={() => setView({ type: "watch" })}
+        onHome={() => {
+          setView({ type: "home" });
+          if (typeof window !== "undefined") {
+            const url = new URL(window.location.href);
+            url.searchParams.delete("v");
+            url.searchParams.delete("q");
+            window.history.replaceState({}, "", url.pathname);
+          }
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }}
       />
+
+      {view.type === "home" && (
+        <HomeFeed
+          videos={queue}
+          activeChip={activeChip}
+          onSelectChip={handleSelectChip}
+          loading={listLoading}
+          hasMore={Boolean(listNextPage)}
+          loadingMore={listLoadingMore}
+          onLoadMore={loadMoreSection}
+          onSelectVideo={(video) => {
+            setView({ type: "watch" });
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            playVideoById(video.id, video);
+          }}
+        />
+      )}
 
       {view.type === "search" && (
         <SearchResults query={view.query} videos={view.results} loading={view.loading} onSelect={openFromSearch} />
       )}
 
-      {/* Watch page stays mounted during search so playback continues (shown as a mini player). */}
+      {/* Watch page stays mounted during home and search so playback continues (shown as a mini player). */}
       <main
         id="main"
         className={
-          view.type === "search"
+          view.type !== "watch"
             ? "contents"
             : "mx-auto grid w-full max-w-[1754px] grid-cols-1 gap-x-6 gap-y-4 pb-12 sm:px-6 sm:pt-6 lg:grid-cols-[minmax(0,1fr)_400px] lg:grid-rows-[auto_1fr]"
         }
       >
-        <div className="lg:col-start-1 lg:row-start-1">
+        <div
+          ref={stageContainerRef}
+          className={
+            view.type !== "watch"
+              ? "contents"
+              : "lg:col-start-1 lg:row-start-1 aspect-video w-full"
+          }
+        >
           <AmbientStage
             meta={meta}
             stageRef={stageRef}
@@ -871,10 +948,27 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID }: XyzPlayerProps)
             onRetry={retryPlayback}
             onSkip={playNextVideo}
             onIframeLoad={handleIframeLoad}
-            isMinimized={isMinimized || view.type === "search"}
+            isMinimized={!isDismissed && (isMinimized || isAutoMinimized || view.type !== "watch")}
+            isHidden={isDismissed || (view.type !== "watch" && !hasStarted && !isPlaying)}
+            viewType={view.type}
             onToggleMinimize={() => {
-              if (view.type === "search") setView({ type: "watch" });
-              else setIsMinimized((prev) => !prev);
+              if (view.type !== "watch") {
+                setView({ type: "watch" });
+              } else if (isAutoMinimized) {
+                // If auto-minimized from scroll, clicking expand scrolls user back up to the video
+                window.scrollTo({ top: 0, behavior: "smooth" });
+                setIsAutoMinimized(false);
+              } else {
+                setIsMinimized((prev) => !prev);
+              }
+            }}
+            onClose={() => {
+              // YouTube mini player dismiss behavior: pause playback and hide mini player
+              engine.pause();
+              setIsPlaying(false);
+              setIsDismissed(true);
+              setIsAutoMinimized(false);
+              setIsMinimized(false);
             }}
             controls={{
               isPlaying,
@@ -894,6 +988,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID }: XyzPlayerProps)
               onRate: changeRate,
               onToggleCaptions: toggleCaptions,
               onToggleFullscreen: toggleFullscreen,
+              onToggleMini: () => setIsMinimized((prev) => !prev),
               onNext: playNextVideo,
               onPrev: playPrevVideo,
               qualities: streamUrl ? [] : shaka.qualities.map((q) => q.height),

@@ -6,10 +6,8 @@ export default async function Home({
   searchParams: Promise<{ v?: string }>;
 }) {
   const resolvedParams = await searchParams;
-  const initialVideoId =
-    resolvedParams?.v && /^[A-Za-z0-9_-]{11}$/.test(resolvedParams.v)
-      ? resolvedParams.v
-      : undefined;
+  const hasVideoQuery = Boolean(resolvedParams?.v && /^[A-Za-z0-9_-]{11}$/.test(resolvedParams.v));
+  const initialVideoId = hasVideoQuery ? resolvedParams?.v : undefined;
 
   return (
     <div className="relative flex min-h-screen flex-col bg-background text-foreground">
@@ -20,7 +18,7 @@ export default async function Home({
         Skip to player
       </a>
 
-      <XyzPlayer initialVideoId={initialVideoId} />
+      <XyzPlayer initialVideoId={initialVideoId} initialHasVideoQuery={hasVideoQuery} />
 
     </div>
   );

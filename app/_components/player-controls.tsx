@@ -9,6 +9,7 @@ import {
   VolumeX,
   Maximize,
   Minimize,
+  PictureInPicture2,
   Captions,
   CaptionsOff,
   SkipBack,
@@ -28,6 +29,7 @@ export interface PlayerControlsProps {
   captionsOn: boolean;
   isFullscreen: boolean;
   posterUrl: string | null;
+  onToggleMini?: () => void;
   onTogglePlay: () => void;
   onSeek: (seconds: number) => void;
   onVolume: (volume: number) => void;
@@ -107,6 +109,7 @@ export function PlayerControls(props: PlayerControlsProps) {
     onToggleFullscreen,
     onNext,
     onPrev,
+    onToggleMini,
     qualities = [],
     quality = null,
     onQuality,
@@ -274,6 +277,11 @@ export function PlayerControls(props: PlayerControlsProps) {
             <IconButton label={captionsOn ? "Captions off" : "Captions on"} onClick={onToggleCaptions}>
               {captionsOn ? <Captions className="size-4" /> : <CaptionsOff className="size-4 opacity-60" />}
             </IconButton>
+            {onToggleMini && (
+              <IconButton label="Mini player (I)" onClick={onToggleMini}>
+                <PictureInPicture2 className="size-4" />
+              </IconButton>
+            )}
             <IconButton label={isFullscreen ? "Exit fullscreen (F)" : "Fullscreen (F)"} onClick={onToggleFullscreen}>
               {isFullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
             </IconButton>
