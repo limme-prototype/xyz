@@ -5,6 +5,8 @@ import { parseChannelFeed } from "../lib/providers/youtube-rss";
 import { resolveSection } from "../lib/content/resolve";
 import { SECTIONS, findSection, type Section } from "../lib/content/sections";
 import { XYZ_CATALOG_VIDEOS } from "../lib/xyz";
+import { GET as getSectionRoute } from "../app/api/xyz/sections/[id]/route";
+import { getHomeContentMode } from "../app/_components/xyz-player";
 
 const NOW = Date.parse("2026-10-06T12:00:00Z");
 const KEY = "AIza" + "k".repeat(35);
@@ -80,6 +82,19 @@ describe("sections config", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(SECTIONS[0]).toMatchObject({ id: "all", source: { kind: "seed" } });
     expect(findSection("nope")).toBeUndefined();
+  });
+});
+
+describe("home content mode", () => {
+  it("stays in default mode without a valid configured key", () => {
+    expect(getHomeContentMode("", "idle")).toBe("default");
+    expect(getHomeContentMode("not-a-key", "ready")).toBe("default");
+  });
+
+  it("switches to YouTube discovery mode only after a valid key has been validated", () => {
+    expect(getHomeContentMode(KEY, "checking")).toBe("default");
+    expect(getHomeContentMode(KEY, "ready")).toBe("youtube");
+    expect(getHomeContentMode(KEY, "error")).toBe("default");
   });
 });
 
@@ -173,5 +188,44 @@ describe("resolveSection", () => {
     const result = await resolveSection(channels, { now: NOW });
     expect(result.origin).toBe("seed");
     expect(result.items).toEqual(XYZ_CATALOG_VIDEOS);
+  });
+
+  it("honors a request-scoped API key when resolving a section-backed home feed", async () => {
+    const fetchSpy = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("googleapis.com/youtube/v3/videos")) {
+        expect(url).toContain(`key=${KEY}`);
+        return Response.json({
+          items: [
+            {
+              id: "abc123defgh",
+              snippet: {
+                title: "Real API video",
+                channelTitle: "API Channel",
+                publishedAt: "2026-10-05T11:00:00Z",
+                description: "A real result from the Data API",
+              },
+              contentDetails: { duration: "PT4M13S" },
+              statistics: { viewCount: "4079642" },
+            },
+          ],
+        });
+      }
+      return Response.json({ items: [] });
+    });
+
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const response = await getSectionRoute(
+      new Request("http://localhost/api/xyz/sections/trending-kh", {
+        headers: { "x-youtube-api-key": KEY },
+      }),
+      { params: Promise.resolve({ id: "trending-kh" }) }
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.items[0]).toMatchObject({ id: "abc123defgh", title: "Real API video", channel: "API Channel" });
+    expect(fetchSpy).toHaveBeenCalled();
   });
 });

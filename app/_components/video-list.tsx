@@ -535,6 +535,8 @@ export function HomeFeed({
   loadingMore,
   onLoadMore,
   onSelectVideo,
+  sourceLabel,
+  emptyMessage,
 }: {
   videos: XyzVideo[];
   activeChip: string;
@@ -544,11 +546,21 @@ export function HomeFeed({
   loadingMore?: boolean;
   onLoadMore?: () => void;
   onSelectVideo: (video: XyzVideo) => void;
+  sourceLabel?: string;
+  emptyMessage?: string;
 }) {
   const [showBanner, setShowBanner] = useState<boolean>(true);
 
   return (
     <section aria-labelledby="home-heading" className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-4 pb-20 pt-4 sm:px-6">
+      {sourceLabel && (
+        <div className="flex items-center gap-2">
+          <span className="rounded-full border border-brand/60 bg-brand/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-brand">
+            {sourceLabel}
+          </span>
+        </div>
+      )}
+
       {/* 1. Customizable meme / announcement slide banner */}
       {showBanner && (
         <MemeCarouselBanner
@@ -575,7 +587,7 @@ export function HomeFeed({
         </div>
       ) : videos.length === 0 ? (
         <div className="py-20 text-center">
-          <p className="text-base text-muted-foreground">No videos found for this topic. Try another category.</p>
+          <p className="text-base text-muted-foreground">{emptyMessage ?? "No videos found for this topic. Try another category."}</p>
         </div>
       ) : (
         <>

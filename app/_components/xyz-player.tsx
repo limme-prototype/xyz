@@ -45,7 +45,13 @@ type PlaybackMode = "native" | "embed";
 
 const PLAYBACK_MODE_KEY = "xyz_playback_mode";
 const API_KEY_STORAGE = "xyz_api_key";
-const YOUTUBE_API_KEY = /^AIza[0-9A-Za-z_-]{35}$/;
+export const YOUTUBE_API_KEY = /^AIza[0-9A-Za-z_-]{35}$/;
+export type HomeContentMode = "default" | "youtube";
+export type HomeValidationState = "idle" | "checking" | "ready" | "error";
+
+export function getHomeContentMode(apiKey: string, validationState: HomeValidationState): HomeContentMode {
+  return validationState === "ready" && YOUTUBE_API_KEY.test(apiKey.trim()) ? "youtube" : "default";
+}
 
 /** Set from settings; sent as a header (never in the URL) so the server can use the user's own quota. */
 let userApiKey = "";
@@ -62,7 +68,7 @@ interface SectionPage {
 async function fetchSection(id: string, pageToken?: string): Promise<SectionPage | null> {
   const qs = pageToken ? `?pageToken=${encodeURIComponent(pageToken)}` : "";
   try {
-    const res = await fetch(`/api/xyz/sections/${encodeURIComponent(id)}${qs}`);
+    const res = await fetch(`/api/xyz/sections/${encodeURIComponent(id)}${qs}`, { headers: apiHeaders() });
     const data = res.ok ? await res.json() : null;
     return Array.isArray(data?.items) ? { items: data.items, nextPageToken: data.nextPageToken ?? null } : null;
   } catch {
@@ -153,6 +159,10 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   const [tempPlaybackMode, setTempPlaybackMode] = useState<PlaybackMode>("native");
   const [apiKey, setApiKey] = useState<string>("");
   const [tempApiKey, setTempApiKey] = useState<string>("");
+  const [youtubeValidationState, setYoutubeValidationState] = useState<HomeValidationState>("idle");
+  const [youtubeHomeVideos, setYoutubeHomeVideos] = useState<XyzVideo[]>([]);
+  const [youtubeHomeError, setYoutubeHomeError] = useState<string | null>(null);
+  const homeValidationRequestRef = useRef(0);
 
   const headerRef = useRef<SiteHeaderHandle>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -220,26 +230,15 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   // The <video> element is the playback surface for HLS streams and for native (DASH) mode.
   const videoActive = Boolean(streamUrl) || playbackMode === "native";
 
-  // The key only applies to the YouTube player; the built-in player never relies on Google.
+  // Keep the configured API key available for the server-side discovery layer regardless of playback mode.
   useEffect(() => {
-    userApiKey = playbackMode === "embed" ? apiKey : "";
-  }, [playbackMode, apiKey]);
+    userApiKey = apiKey;
+  }, [apiKey]);
 
   useEffect(() => {
     videoActiveRef.current = videoActive;
     playbackModeRef.current = playbackMode;
   }, [videoActive, playbackMode]);
-
-  // Load persisted settings after hydration (server render always assumes native mode).
-  useEffect(() => {
-    const storedMode = readSetting(PLAYBACK_MODE_KEY);
-    const storedKey = readSetting(API_KEY_STORAGE);
-    const timer = setTimeout(() => {
-      if (storedMode === "embed") setPlaybackMode("embed");
-      if (YOUTUBE_API_KEY.test(storedKey)) setApiKey(storedKey);
-    }, 0);
-    return () => clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     currentTimeRef.current = currentTime;
@@ -772,6 +771,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   };
 
   const handleSelectChip = (sectionId: string) => {
+    if (getHomeContentMode(apiKey, youtubeValidationState) === "youtube") return;
     setActiveChip(sectionId);
     setListNextPage(null);
     const requestId = ++listRequestRef.current;
@@ -842,25 +842,83 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
     setShowSettings(true);
   };
 
+  const refreshYouTubeHome = (key: string) => {
+    if (!key || !YOUTUBE_API_KEY.test(key.trim())) {
+      setYoutubeValidationState("idle");
+      setYoutubeHomeVideos([]);
+      setYoutubeHomeError(key ? "That doesn't look like a valid YouTube API key." : null);
+      return;
+    }
+
+    userApiKey = key;
+    const requestId = ++homeValidationRequestRef.current;
+    setYoutubeValidationState("checking");
+    setYoutubeHomeError(null);
+
+    void fetchVideos("/api/xyz?feed=trending")
+      .then((results) => {
+        if (requestId !== homeValidationRequestRef.current) return;
+        if (!results || results.length === 0) {
+          setYoutubeHomeError("No YouTube videos were returned for this key.");
+          setYoutubeValidationState("error");
+          setYoutubeHomeVideos([]);
+          return;
+        }
+        setYoutubeHomeVideos(results);
+        setYoutubeValidationState("ready");
+      })
+      .catch(() => {
+        if (requestId !== homeValidationRequestRef.current) return;
+        setYoutubeHomeError("YouTube discovery is temporarily unavailable. Try a different key or retry later.");
+        setYoutubeValidationState("error");
+        setYoutubeHomeVideos([]);
+      });
+  };
+
+  // Load persisted settings after hydration (server render always assumes native mode).
+  useEffect(() => {
+    const storedMode = readSetting(PLAYBACK_MODE_KEY);
+    const storedKey = readSetting(API_KEY_STORAGE);
+    const timer = setTimeout(() => {
+      if (storedMode === "embed") setPlaybackMode("embed");
+      if (YOUTUBE_API_KEY.test(storedKey)) {
+        setApiKey(storedKey);
+        setYoutubeValidationState("checking");
+        refreshYouTubeHome(storedKey);
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
+
   const saveSettings = (e: React.FormEvent) => {
     e.preventDefault();
     const key = tempApiKey.trim();
-    if (tempPlaybackMode === "embed" && key && !YOUTUBE_API_KEY.test(key)) {
+    if (key && !YOUTUBE_API_KEY.test(key)) {
+      setYoutubeValidationState("error");
+      setYoutubeHomeError("That doesn't look like a valid YouTube API key.");
       showToast("That doesn't look like a YouTube API key");
       return;
     }
     try {
       localStorage.setItem(PLAYBACK_MODE_KEY, tempPlaybackMode);
-      if (tempPlaybackMode === "embed") {
-        if (key) localStorage.setItem(API_KEY_STORAGE, key);
-        else localStorage.removeItem(API_KEY_STORAGE);
-      }
+      if (key) localStorage.setItem(API_KEY_STORAGE, key);
+      else localStorage.removeItem(API_KEY_STORAGE);
     } catch {}
-    if (tempPlaybackMode === "embed") setApiKey(key);
+    setApiKey(key);
+    setYoutubeHomeError(key ? null : "YouTube discovery is disabled.");
+    setYoutubeValidationState(key ? "checking" : "idle");
+    if (key) {
+      refreshYouTubeHome(key);
+    }
     setPlaybackMode(tempPlaybackMode);
     setShowSettings(false);
     showToast(tempPlaybackMode === "native" ? "Using built-in player" : "Using YouTube player");
   };
+
+  const homeMode = getHomeContentMode(apiKey, youtubeValidationState);
+  const homeVideos = homeMode === "youtube" ? youtubeHomeVideos : queue;
+  const homeLoading = homeMode === "youtube" ? youtubeValidationState === "checking" : listLoading;
+  const homeErrorMessage = homeMode === "youtube" ? youtubeHomeError : null;
 
   const upNext = (
     <div className="flex flex-col gap-3">
@@ -900,18 +958,20 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
 
       {view.type === "home" && (
         <HomeFeed
-          videos={queue}
-          activeChip={activeChip}
+          videos={homeVideos}
+          activeChip={homeMode === "youtube" ? "trending-kh" : activeChip}
           onSelectChip={handleSelectChip}
-          loading={listLoading}
-          hasMore={Boolean(listNextPage)}
-          loadingMore={listLoadingMore}
-          onLoadMore={loadMoreSection}
+          loading={homeLoading}
+          hasMore={homeMode === "youtube" ? false : Boolean(listNextPage)}
+          loadingMore={homeMode === "youtube" ? false : listLoadingMore}
+          onLoadMore={homeMode === "youtube" ? undefined : loadMoreSection}
           onSelectVideo={(video) => {
             setView({ type: "watch" });
             window.scrollTo({ top: 0, behavior: "smooth" });
             playVideoById(video.id, video);
           }}
+          sourceLabel={homeMode === "youtube" ? "YouTube" : undefined}
+          emptyMessage={homeErrorMessage ?? undefined}
         />
       )}
 
@@ -1079,24 +1139,22 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
                 </label>
               </fieldset>
 
-              {tempPlaybackMode === "embed" && (
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="api-key-input" className="text-sm font-medium">
-                    YouTube API key <span className="font-normal text-muted-foreground">(optional)</span>
-                  </label>
-                  <Input
-                    id="api-key-input"
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="AIza..."
-                    value={tempApiKey}
-                    onChange={(e) => setTempApiKey(e.target.value)}
-                    className="h-9 font-mono text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground">Used for search and video details.</p>
-                </div>
-              )}
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="api-key-input" className="text-sm font-medium">
+                  YouTube API key <span className="font-normal text-muted-foreground">(optional)</span>
+                </label>
+                <Input
+                  id="api-key-input"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="AIza..."
+                  value={tempApiKey}
+                  onChange={(e) => setTempApiKey(e.target.value)}
+                  className="h-9 font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">Used for home discovery, search, and video details.</p>
+              </div>
 
               <div className="flex items-center justify-end gap-2 pt-2">
                 <Button type="button" variant="ghost" size="sm" className="rounded-[10px]" onClick={() => setShowSettings(false)}>

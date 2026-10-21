@@ -21,7 +21,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "Invalid page token" }, { status: 400 });
   }
 
-  const result = await resolveSection(section, { apiKey: process.env.XYZ_API_KEY || undefined, pageToken });
+  const requestKey = request.headers.get("x-youtube-api-key")?.trim() || "";
+  const apiKey = /^AIza[0-9A-Za-z_-]{35}$/.test(requestKey) ? requestKey : process.env.XYZ_API_KEY || undefined;
+  const result = await resolveSection(section, { apiKey, pageToken });
   const payload = assertNoBlockedUrls(result);
 
   return NextResponse.json(payload, {
