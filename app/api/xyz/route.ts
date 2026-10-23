@@ -37,6 +37,20 @@ interface GoogleVideoItem {
   statistics?: { viewCount?: string };
 }
 
+function youtubeApiFailure(data: unknown): { status: number; code: string; message: string } {
+  const error =
+    data && typeof data === "object" && "error" in data
+      ? JSON.stringify((data as { error?: unknown }).error ?? "")
+      : "";
+  if (/quotaExceeded|dailyLimitExceeded/i.test(error)) {
+    return { status: 429, code: "quota_exceeded", message: "YouTube API quota exceeded" };
+  }
+  if (/keyInvalid|API key not valid|API_KEY_INVALID/i.test(error)) {
+    return { status: 401, code: "invalid_api_key", message: "YouTube rejected this API key" };
+  }
+  return { status: 502, code: "youtube_api_error", message: "YouTube discovery failed" };
+}
+
 const SERVER_FETCH_HEADERS = {
   "Accept": "application/json",
   "User-Agent":
@@ -324,6 +338,13 @@ export async function GET(request: NextRequest) {
           headers: SERVER_FETCH_HEADERS,
           signal: AbortSignal.timeout(5000),
         });
+        if (!apiRes.ok && userApiKey) {
+          const failure = youtubeApiFailure(await apiRes.json().catch(() => null));
+          return NextResponse.json(
+            { error: failure.message, code: failure.code },
+            { status: failure.status, headers: responseHeaders }
+          );
+        }
         if (apiRes.ok) {
           const apiData = await apiRes.json();
           const rawItems = (apiData.items || []) as GoogleSearchItem[];
@@ -386,6 +407,12 @@ export async function GET(request: NextRequest) {
           );
         }
       } catch {
+        if (userApiKey) {
+          return NextResponse.json(
+            { error: "YouTube discovery is temporarily unavailable", code: "network_error" },
+            { status: 502, headers: responseHeaders }
+          );
+        }
         // Fallback to providers below
       }
     }

@@ -98,13 +98,34 @@ function readSetting(key: string): string {
   }
 }
 
-async function fetchVideos(url: string): Promise<XyzVideo[] | null> {
+async function fetchVideos(url: string): Promise<{ videos: XyzVideo[] | null; errorCode: string | null }> {
   try {
     const res = await fetch(url, { headers: apiHeaders() });
-    const data = res.ok ? await res.json() : null;
-    return Array.isArray(data?.results) ? (data.results as XyzVideo[]) : null;
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      return {
+        videos: null,
+        errorCode: typeof data?.code === "string" ? data.code : "search_error",
+      };
+    }
+    return Array.isArray(data?.results)
+      ? { videos: data.results as XyzVideo[], errorCode: null }
+      : { videos: null, errorCode: "invalid_response" };
   } catch {
-    return null;
+    return { videos: null, errorCode: "network_error" };
+  }
+}
+
+function searchErrorMessage(code: string): string {
+  switch (code) {
+    case "invalid_api_key":
+      return "YouTube rejected the configured API key. Check that it is valid and enabled for YouTube Data API v3.";
+    case "quota_exceeded":
+      return "The YouTube API quota has been reached. Try again after the quota resets.";
+    case "network_error":
+      return "Search is temporarily unavailable. Check your connection and try again.";
+    default:
+      return "Search could not be completed. Please try again.";
   }
 }
 
@@ -140,7 +161,7 @@ interface XyzPlayerProps {
 type View =
   | { type: "home" }
   | { type: "watch" }
-  | { type: "search"; query: string; results: XyzVideo[]; loading: boolean };
+  | { type: "search"; query: string; results: XyzVideo[]; loading: boolean; error: string | null };
 
 export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQuery = true }: XyzPlayerProps) {
   useAudioKeepalive();
@@ -828,37 +849,99 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
     });
   };
 
+  const searchForQuery = useCallback((input: string, pushHistory = true) => {
+    const query = input.trim();
+    if (!query) return;
+    if (pushHistory) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("v");
+      url.searchParams.set("q", query);
+      window.history.pushState({}, "", url.toString());
+    }
+    const requestId = ++listRequestRef.current;
+    setView({ type: "search", query, results: [], loading: true, error: null });
+    window.scrollTo({ top: 0 });
+    void fetchVideos(`/api/xyz?q=${encodeURIComponent(query)}`).then(({ videos, errorCode }) => {
+      if (requestId !== listRequestRef.current) return;
+      setView({
+        type: "search",
+        query,
+        results: videos ?? [],
+        loading: false,
+        error: errorCode ? searchErrorMessage(errorCode) : null,
+      });
+    });
+  }, []);
+
   const handleSearch = (input: string) => {
     const hls = parseHlsUrl(input);
     if (hls) {
+      listRequestRef.current += 1;
+      const url = new URL(window.location.href);
+      url.searchParams.delete("q");
+      url.searchParams.delete("v");
+      window.history.pushState({}, "", url.toString());
       setView({ type: "watch" });
       playStream(hls);
       return;
     }
     const parsed = parseXyzUrl(input);
     if (parsed.ok) {
+      listRequestRef.current += 1;
+      const url = new URL(window.location.href);
+      url.searchParams.delete("q");
+      url.searchParams.set("v", parsed.videoId);
+      window.history.pushState({}, "", url.toString());
       setView({ type: "watch" });
       playVideoById(parsed.videoId);
       return;
     }
-    const requestId = ++listRequestRef.current;
-    setView({ type: "search", query: input, results: [], loading: true });
-    window.scrollTo({ top: 0 });
-    void fetchVideos(`/api/xyz?q=${encodeURIComponent(input)}`).then((results) => {
-      if (requestId !== listRequestRef.current) return;
-      setView({ type: "search", query: input, results: results ?? [], loading: false });
-    });
+    searchForQuery(input);
   };
 
   const openFromSearch = (video: XyzVideo) => {
     if (view.type === "search") {
       setQueue(view.results);
       setActiveChip("");
+      const url = new URL(window.location.href);
+      url.searchParams.set("q", view.query);
+      url.searchParams.set("v", video.id);
+      window.history.pushState({}, "", url.toString());
     }
     setView({ type: "watch" });
     window.scrollTo({ top: 0 });
     playVideoById(video.id, video);
   };
+
+  useEffect(() => {
+    if (initialHasVideoQuery) return;
+    const query = new URLSearchParams(window.location.search).get("q");
+    if (!query) return;
+    const timer = setTimeout(() => searchForQuery(query, false), 0);
+    return () => clearTimeout(timer);
+  }, [initialHasVideoQuery, searchForQuery]);
+
+  useEffect(() => {
+    const restoreLocation = () => {
+      const params = new URLSearchParams(window.location.search);
+      const videoId = params.get("v");
+      if (videoId && /^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+        listRequestRef.current += 1;
+        setView({ type: "watch" });
+        playVideoById(videoId);
+        return;
+      }
+      const query = params.get("q")?.trim();
+      if (query) {
+        searchForQuery(query, false);
+        return;
+      }
+      listRequestRef.current += 1;
+      setView({ type: "home" });
+    };
+    window.addEventListener("popstate", restoreLocation);
+    return () => window.removeEventListener("popstate", restoreLocation);
+  }, [playVideoById, searchForQuery]);
 
   const handleOpenSettings = () => {
     setTempPlaybackMode(playbackMode);
@@ -981,6 +1064,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
         onSearch={handleSearch}
         onOpenSettings={handleOpenSettings}
         onHome={() => {
+          listRequestRef.current += 1;
           setView({ type: "home" });
           if (typeof window !== "undefined") {
             const url = new URL(window.location.href);
@@ -1014,7 +1098,15 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
       )}
 
       {view.type === "search" && (
-        <SearchResults query={view.query} videos={view.results} loading={view.loading} onSelect={openFromSearch} />
+        <SearchResults
+          query={view.query}
+          videos={view.results}
+          loading={view.loading}
+          error={view.error}
+          activeVideoId={activeVideoId}
+          onSelect={openFromSearch}
+          onRetry={() => searchForQuery(view.query, false)}
+        />
       )}
 
       {/* Watch page stays mounted during home and search so playback continues (shown as a mini player). */}

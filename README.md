@@ -18,6 +18,7 @@ A distraction-free, next-generation cinematic video workspace built with Next.js
   - `N` / `P`: Next / Previous video
   - `M`: Toggle Picture-in-Picture Mini-Player
   - `⌘K` / `/`: Open Spotlight Command Palette
+- **Private Recent Searches**: The 10 most recent submitted search terms stay in this browser for up to 90 days. Click the search field to repeat or remove a search, or clear the full history. Terms are stored only in `localStorage`, synchronized across tabs, and are not copied into cookies or sent to a server for history sync.
 
 ## 🚀 Getting Started
 

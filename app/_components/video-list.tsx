@@ -322,12 +322,18 @@ export function SearchResults({
   query,
   videos,
   loading,
+  error,
+  activeVideoId,
   onSelect,
+  onRetry,
 }: {
   query: string;
   videos: XyzVideo[];
   loading: boolean;
+  error: string | null;
+  activeVideoId?: string;
   onSelect: (video: XyzVideo) => void;
+  onRetry: () => void;
 }) {
   return (
     <section aria-labelledby="search-heading" className="mx-auto w-full max-w-[1400px] px-4 pb-16 pt-6 sm:px-6">
@@ -350,6 +356,17 @@ export function SearchResults({
             </div>
           ))}
         </div>
+      ) : error ? (
+        <div className="flex flex-col items-center gap-4 py-16 text-center" role="alert">
+          <p className="text-muted-foreground">{error}</p>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="rounded-full border border-border px-5 py-2 text-sm font-medium text-foreground transition-colors hover:border-brand/70 hover:bg-secondary"
+          >
+            Retry search
+          </button>
+        </div>
       ) : videos.length === 0 ? (
         <p className="py-16 text-center text-muted-foreground">
           No videos match &ldquo;{query}&rdquo;. Try fewer or different words.
@@ -358,7 +375,12 @@ export function SearchResults({
         <ul className="grid grid-cols-1 gap-x-5 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
           {videos.map((video, idx) => (
             <li key={`${video.id}-${idx}`} className={idx === 0 ? "sm:col-span-2 lg:row-span-2" : ""}>
-              <VideoCard video={video} featured={idx === 0} onSelect={() => onSelect(video)} />
+              <VideoCard
+                video={video}
+                featured={idx === 0}
+                selected={video.id === activeVideoId}
+                onSelect={() => onSelect(video)}
+              />
             </li>
           ))}
         </ul>
