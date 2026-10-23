@@ -262,14 +262,25 @@ export function UpNextList({
 }
 
 /** Card for the search and home grid. The first result is rendered larger as the top match. */
-export function VideoCard({ video, featured, onSelect }: { video: XyzVideo; featured: boolean; onSelect: () => void }) {
+export function VideoCard({
+  video,
+  featured,
+  selected = false,
+  onSelect,
+}: {
+  video: XyzVideo;
+  featured: boolean;
+  selected?: boolean;
+  onSelect: () => void;
+}) {
   return (
     <button
       type="button"
       onClick={onSelect}
-      className={`group flex h-full w-full flex-col gap-3 text-left cursor-pointer ${featured ? "sm:col-span-2 lg:row-span-2" : ""}`}
+      aria-pressed={selected}
+      className={`group flex h-full w-full flex-col gap-3 text-left cursor-pointer focus-visible:rounded-2xl ${featured ? "sm:col-span-2 lg:row-span-2" : ""}`}
     >
-      <span className="relative block aspect-video w-full overflow-hidden rounded-2xl bg-muted ring-1 ring-border transition-shadow group-hover:ring-2 group-hover:ring-brand/70 group-focus-visible:ring-2 group-focus-visible:ring-brand">
+      <span className={`relative block aspect-video w-full overflow-hidden rounded-2xl bg-muted transition-shadow ${selected ? "ring-2 ring-brand" : "ring-1 ring-border group-hover:ring-2 group-hover:ring-brand/70 group-focus-visible:ring-2 group-focus-visible:ring-brand"}`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={video.thumbnailUrl || `/api/xyz/thumb/${video.id}`}
@@ -537,6 +548,8 @@ export function HomeFeed({
   onSelectVideo,
   sourceLabel,
   emptyMessage,
+  activeVideoId,
+  emptyIsError = false,
 }: {
   videos: XyzVideo[];
   activeChip: string;
@@ -548,6 +561,8 @@ export function HomeFeed({
   onSelectVideo: (video: XyzVideo) => void;
   sourceLabel?: string;
   emptyMessage?: string;
+  activeVideoId?: string;
+  emptyIsError?: boolean;
 }) {
   const [showBanner, setShowBanner] = useState<boolean>(true);
 
@@ -586,7 +601,7 @@ export function HomeFeed({
           ))}
         </div>
       ) : videos.length === 0 ? (
-        <div className="py-20 text-center">
+        <div className="py-20 text-center" role={emptyIsError ? "alert" : "status"}>
           <p className="text-base text-muted-foreground">{emptyMessage ?? "No videos found for this topic. Try another category."}</p>
         </div>
       ) : (
@@ -597,6 +612,7 @@ export function HomeFeed({
                 <VideoCard
                   video={video}
                   featured={idx === 0}
+                  selected={video.id === activeVideoId}
                   onSelect={() => onSelectVideo(video)}
                 />
               </li>

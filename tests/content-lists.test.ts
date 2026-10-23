@@ -91,10 +91,11 @@ describe("home content mode", () => {
     expect(getHomeContentMode("not-a-key", "ready")).toBe("default");
   });
 
-  it("switches to YouTube discovery mode only after a valid key has been validated", () => {
-    expect(getHomeContentMode(KEY, "checking")).toBe("default");
+  it("keeps a valid key in YouTube mode while checking and after discovery errors", () => {
+    expect(getHomeContentMode(KEY, "idle")).toBe("default");
+    expect(getHomeContentMode(KEY, "checking")).toBe("youtube");
     expect(getHomeContentMode(KEY, "ready")).toBe("youtube");
-    expect(getHomeContentMode(KEY, "error")).toBe("default");
+    expect(getHomeContentMode(KEY, "error")).toBe("youtube");
   });
 });
 

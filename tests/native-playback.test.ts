@@ -222,6 +222,106 @@ describe("GET /api/xyz search with a personal API key", () => {
   });
 });
 
+describe("GET /api/xyz?feed=trending with a personal API key", () => {
+  const KEY = "AIza" + "a".repeat(35);
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reports quota failure instead of substituting provider or seed videos", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        calls.push(url);
+        if (url.includes("googleapis.com/youtube/v3/videos")) {
+          return Response.json(
+            { error: { errors: [{ reason: "quotaExceeded" }], message: "quota exceeded" } },
+            { status: 403 }
+          );
+        }
+        return new Response("unavailable", { status: 503 });
+      })
+    );
+
+    const { GET } = await import("../app/api/xyz/route");
+    const request = new Request("http://localhost/api/xyz?feed=trending", {
+      headers: { "x-youtube-api-key": KEY },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await GET(request as any);
+    const body = await response.json();
+
+    expect(response.status).toBe(429);
+    expect(body).toMatchObject({ code: "quota_exceeded" });
+    expect(calls.some((url) => url.includes("googleapis.com"))).toBe(true);
+    expect(calls.some((url) => url.includes("invidious"))).toBe(false);
+  });
+
+  it.each([
+    ["invalid_api_key", 401, "YouTube API key not valid"],
+    ["youtube_api_error", 502, "backendError"],
+  ])("returns a distinct %s response without fallback", async (code, status, reason) => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        calls.push(url);
+        if (!url.includes("googleapis.com/youtube/v3/videos")) {
+          return new Response("unexpected fallback", { status: 503 });
+        }
+        return Response.json({ error: { errors: [{ reason }], message: reason } }, { status: 403 });
+      })
+    );
+
+    const { GET } = await import("../app/api/xyz/route");
+    const request = new Request("http://localhost/api/xyz?feed=trending", {
+      headers: { "x-youtube-api-key": KEY },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await GET(request as any);
+    const body = await response.json();
+
+    expect(response.status).toBe(status);
+    expect(body.code).toBe(code);
+    expect(calls.some((url) => url.includes("invidious"))).toBe(false);
+  });
+
+  it("preserves a valid empty API result as an empty YouTube feed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ items: [] })));
+    const { GET } = await import("../app/api/xyz/route");
+    const request = new Request("http://localhost/api/xyz?feed=trending", {
+      headers: { "x-youtube-api-key": KEY },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await GET(request as any);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ results: [], origin: "youtube" });
+  });
+
+  it("reports network failures without substituting fallback videos", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        calls.push(String(input));
+        throw new TypeError("network unavailable");
+      })
+    );
+    const { GET } = await import("../app/api/xyz/route");
+    const request = new Request("http://localhost/api/xyz?feed=trending", {
+      headers: { "x-youtube-api-key": KEY },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await GET(request as any);
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ code: "network_error" });
+    expect(calls).toHaveLength(1);
+  });
+});
+
 describe("GET /api/xyz/manifest/:id", () => {
   beforeEach(() => resetInstanceCache());
   afterEach(() => vi.unstubAllGlobals());

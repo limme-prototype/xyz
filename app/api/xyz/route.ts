@@ -26,6 +26,13 @@ interface GoogleSearchItem {
 
 interface GoogleVideoItem {
   id?: string;
+  snippet?: {
+    title?: string;
+    channelTitle?: string;
+    channelId?: string;
+    publishedAt?: string;
+    description?: string;
+  };
   contentDetails?: { duration?: string };
   statistics?: { viewCount?: string };
 }
@@ -164,26 +171,53 @@ export async function GET(request: NextRequest) {
           signal: AbortSignal.timeout(4500),
         });
         if (res.ok) {
-          const data = await res.json();
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const videos: XyzVideo[] = (data.items || []).map((i: any) => ({
-            id: i.id,
-            title: i.snippet.title,
-            channel: i.snippet.channelTitle,
-            channelUrl: `https://www.youtube.com/channel/${i.snippet.channelId}`,
-            views: i.statistics?.viewCount ? `${i.statistics.viewCount} views` : "Trending",
-            uploadedAt: new Date(i.snippet.publishedAt).toLocaleDateString(),
-            duration: parseDurationIso(i.contentDetails?.duration),
-            category: "General",
-            thumbnailUrl: `/api/xyz/thumb/${i.id}`,
-            description: i.snippet.description || "",
-          }));
+          const data = (await res.json()) as { items?: GoogleVideoItem[] };
+          const videos: XyzVideo[] = (Array.isArray(data.items) ? data.items : [])
+            .filter((i): i is GoogleVideoItem & { id: string } => typeof i?.id === "string" && /^[A-Za-z0-9_-]{11}$/.test(i.id))
+            .map((i) => ({
+              id: i.id,
+              title: i.snippet?.title || "Video",
+              channel: i.snippet?.channelTitle || "Creator",
+              channelUrl: i.snippet?.channelId ? `https://www.youtube.com/channel/${i.snippet.channelId}` : "",
+              views: i.statistics?.viewCount ? `${i.statistics.viewCount} views` : "Trending",
+              uploadedAt: i.snippet?.publishedAt ? new Date(i.snippet.publishedAt).toLocaleDateString() : "",
+              duration: parseDurationIso(i.contentDetails?.duration),
+              category: "General",
+              thumbnailUrl: `/api/xyz/thumb/${i.id}`,
+              description: i.snippet?.description || "",
+            }));
           return NextResponse.json(
-            { results: videos, live: true },
+            { results: videos, live: true, origin: "youtube" },
             { headers: responseHeaders }
           );
         }
+        if (userApiKey) {
+          const data = await res.json().catch(() => null);
+          const errorText = JSON.stringify(data?.error ?? "");
+          if (/quotaExceeded|dailyLimitExceeded/i.test(errorText)) {
+            return NextResponse.json(
+              { error: "YouTube API quota exceeded", code: "quota_exceeded" },
+              { status: 429, headers: responseHeaders }
+            );
+          }
+          if (/keyInvalid|API key not valid|API_KEY_INVALID/i.test(errorText)) {
+            return NextResponse.json(
+              { error: "YouTube rejected this API key", code: "invalid_api_key" },
+              { status: 401, headers: responseHeaders }
+            );
+          }
+          return NextResponse.json(
+            { error: "YouTube discovery failed", code: "youtube_api_error" },
+            { status: 502, headers: responseHeaders }
+          );
+        }
       } catch {
+        if (userApiKey) {
+          return NextResponse.json(
+            { error: "YouTube discovery is temporarily unavailable", code: "network_error" },
+            { status: 502, headers: responseHeaders }
+          );
+        }
         // fallback to providers below
       }
     }

@@ -50,7 +50,7 @@ export type HomeContentMode = "default" | "youtube";
 export type HomeValidationState = "idle" | "checking" | "ready" | "error";
 
 export function getHomeContentMode(apiKey: string, validationState: HomeValidationState): HomeContentMode {
-  return validationState === "ready" && YOUTUBE_API_KEY.test(apiKey.trim()) ? "youtube" : "default";
+  return validationState !== "idle" && YOUTUBE_API_KEY.test(apiKey.trim()) ? "youtube" : "default";
 }
 
 /** Set from settings; sent as a header (never in the URL) so the server can use the user's own quota. */
@@ -105,6 +105,30 @@ async function fetchVideos(url: string): Promise<XyzVideo[] | null> {
     return Array.isArray(data?.results) ? (data.results as XyzVideo[]) : null;
   } catch {
     return null;
+  }
+}
+
+async function fetchYouTubeHome(key: string): Promise<{ videos: XyzVideo[] | null; errorCode: string | null }> {
+  try {
+    const res = await fetch("/api/xyz?feed=trending", { headers: { "x-youtube-api-key": key } });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) return { videos: null, errorCode: typeof data?.code === "string" ? data.code : "youtube_api_error" };
+    return { videos: Array.isArray(data?.results) ? (data.results as XyzVideo[]) : null, errorCode: null };
+  } catch {
+    return { videos: null, errorCode: "network_error" };
+  }
+}
+
+function youtubeHomeMessage(code: string): string {
+  switch (code) {
+    case "invalid_api_key":
+      return "YouTube rejected this API key. Check that it is valid and enabled for YouTube Data API v3.";
+    case "quota_exceeded":
+      return "This YouTube API key has reached its quota. Try again after the quota resets.";
+    case "network_error":
+      return "YouTube discovery is temporarily unavailable. Check your connection and retry.";
+    default:
+      return "YouTube discovery failed. Check the API key restrictions and try again.";
   }
 }
 
@@ -855,16 +879,23 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
     setYoutubeValidationState("checking");
     setYoutubeHomeError(null);
 
-    void fetchVideos("/api/xyz?feed=trending")
-      .then((results) => {
+    void fetchYouTubeHome(key)
+      .then(({ videos, errorCode }) => {
         if (requestId !== homeValidationRequestRef.current) return;
-        if (!results || results.length === 0) {
-          setYoutubeHomeError("No YouTube videos were returned for this key.");
+        if (!videos) {
+          setYoutubeHomeError(youtubeHomeMessage(errorCode ?? "youtube_api_error"));
           setYoutubeValidationState("error");
           setYoutubeHomeVideos([]);
           return;
         }
-        setYoutubeHomeVideos(results);
+        if (videos.length === 0) {
+          setYoutubeHomeError("YouTube returned no videos for this feed.");
+          setYoutubeHomeVideos([]);
+          setYoutubeValidationState("ready");
+          return;
+        }
+        setYoutubeHomeError(null);
+        setYoutubeHomeVideos(videos);
         setYoutubeValidationState("ready");
       })
       .catch(() => {
@@ -905,7 +936,12 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
       else localStorage.removeItem(API_KEY_STORAGE);
     } catch {}
     setApiKey(key);
-    setYoutubeHomeError(key ? null : "YouTube discovery is disabled.");
+    userApiKey = key;
+    if (!key) {
+      homeValidationRequestRef.current += 1;
+      setYoutubeHomeVideos([]);
+    }
+    setYoutubeHomeError(null);
     setYoutubeValidationState(key ? "checking" : "idle");
     if (key) {
       refreshYouTubeHome(key);
@@ -965,6 +1001,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
           hasMore={homeMode === "youtube" ? false : Boolean(listNextPage)}
           loadingMore={homeMode === "youtube" ? false : listLoadingMore}
           onLoadMore={homeMode === "youtube" ? undefined : loadMoreSection}
+          activeVideoId={activeVideoId}
           onSelectVideo={(video) => {
             setView({ type: "watch" });
             window.scrollTo({ top: 0, behavior: "smooth" });
@@ -972,6 +1009,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
           }}
           sourceLabel={homeMode === "youtube" ? "YouTube" : undefined}
           emptyMessage={homeErrorMessage ?? undefined}
+          emptyIsError={homeMode === "youtube" && youtubeValidationState === "error"}
         />
       )}
 
