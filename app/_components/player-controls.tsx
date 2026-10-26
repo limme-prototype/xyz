@@ -126,11 +126,16 @@ export function PlayerControls(props: PlayerControlsProps) {
 
   const [isActive, setIsActive] = useState(true);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
+
+  const hideChrome = () => {
+    if (!controlsRef.current?.contains(document.activeElement)) setIsActive(false);
+  };
 
   const wake = () => {
     setIsActive(true);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = setTimeout(() => setIsActive(false), 2500);
+    hideTimerRef.current = setTimeout(hideChrome, 2500);
   };
 
   const showChrome = !isPlaying || isActive;
@@ -142,7 +147,7 @@ export function PlayerControls(props: PlayerControlsProps) {
     <div
       className={`absolute inset-0 z-20 select-none ${showChrome ? "cursor-default" : "cursor-none"}`}
       onMouseMove={wake}
-      onMouseLeave={() => setIsActive(false)}
+      onMouseLeave={hideChrome}
     >
       {/* Click glass: blocks all pointer events from reaching the iframe */}
       <button
@@ -189,6 +194,11 @@ export function PlayerControls(props: PlayerControlsProps) {
 
       {/* Bottom control bar */}
       <div
+        ref={controlsRef}
+        onFocus={wake}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) wake();
+        }}
         className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-3 pb-2 pt-10 transition-opacity duration-300 ${
           showChrome ? "opacity-100" : "pointer-events-none opacity-0"
         }`}

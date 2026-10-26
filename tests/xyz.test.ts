@@ -6,6 +6,7 @@ import {
   parseXyzUrl,
   parseHlsUrl,
 } from "../lib/xyz";
+import { createPlaybackSession, isPlaybackSessionCurrent } from "../lib/playback-session";
 
 const id = "dQw4w9WgXcQ";
 
@@ -94,5 +95,17 @@ describe("headless embed + HLS", () => {
     "dQw4w9WgXcQ",
   ])("rejects non-HLS input %s", (url) => {
     expect(parseHlsUrl(url)).toBeNull();
+  });
+});
+
+describe("playback session freshness", () => {
+  it("treats older retries and stale responses as outdated", () => {
+    const firstAttempt = createPlaybackSession("abc12345678", 0);
+    const secondAttempt = createPlaybackSession("abc12345678", 1);
+
+    expect(isPlaybackSessionCurrent(firstAttempt, "abc12345678")).toBe(true);
+    expect(isPlaybackSessionCurrent(secondAttempt, "abc12345678")).toBe(true);
+    expect(isPlaybackSessionCurrent(firstAttempt, "abc12345678", secondAttempt.id)).toBe(false);
+    expect(isPlaybackSessionCurrent(secondAttempt, "zzz99999999")).toBe(false);
   });
 });

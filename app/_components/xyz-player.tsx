@@ -10,6 +10,7 @@ import {
   parseXyzUrl,
 } from "@/lib/xyz";
 import { VideoMeta } from "@/lib/types/player";
+import { createPlaybackSession, isPlaybackSessionCurrent } from "@/lib/playback-session";
 import { useAudioKeepalive, ensureAudioContext } from "@/lib/hooks/use-audio-keepalive";
 import { useMediaSession } from "@/lib/hooks/use-media-session";
 import { useHotkeys } from "@/lib/hooks/use-hotkeys";
@@ -177,6 +178,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [toast, setToast] = useState<string | null>(null);
+  const settingsDialogRef = useRef<HTMLDivElement | null>(null);
   const [queue, setQueue] = useState<XyzVideo[]>(XYZ_CATALOG_VIDEOS);
   const [activeChip, setActiveChip] = useState<string>(DEFAULT_SECTION_ID);
   const [listLoading, setListLoading] = useState<boolean>(false);
@@ -214,6 +216,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const stageContainerRef = useRef<HTMLDivElement>(null);
+  const playbackSessionRef = useRef(createPlaybackSession(initialVideoId, 0));
   const activeVideoIdRef = useRef(activeVideoId);
   const initialVideoIdRef = useRef(initialVideoId);
   const isAutoplayRef = useRef(isAutoplay);
@@ -391,18 +394,21 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   }, []);
 
   /** Resolves DASH manifests for a video from the healthy public instances. */
-  const loadNativeSources = useCallback((id: string) => {
+  const loadNativeSources = useCallback((id: string, session = playbackSessionRef.current) => {
+    if (!isPlaybackSessionCurrent(session, id, playbackSessionRef.current.id)) return;
     // One request: the server picks a working instance and returns the validated manifest
     // (CDN-cached), so the player starts without a separate "find sources" round trip.
     setIsBuffering(true);
     setDashUrls([manifestPath(id)]);
   }, []);
 
-  const loadMeta = useCallback((id: string) => {
+  const loadMeta = useCallback((id: string, session = playbackSessionRef.current) => {
+    const requestId = session.id;
     fetch(`/api/xyz?id=${id}`, { headers: apiHeaders() })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (!data || data.error || activeVideoIdRef.current !== id) return;
+        if (!data || data.error || !isPlaybackSessionCurrent(session, id, playbackSessionRef.current.id)) return;
+        if (requestId !== playbackSessionRef.current.id && activeVideoIdRef.current !== id) return;
         setMeta((prev) => ({
           id: data.id || id,
           title: data.title,
@@ -423,9 +429,16 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
     loadMeta(initialVideoIdRef.current);
   }, [loadMeta]);
 
+  const startPlaybackSession = useCallback((id: string) => {
+    const next = createPlaybackSession(id, (playbackSessionRef.current?.attempt ?? 0) + 1);
+    playbackSessionRef.current = next;
+    return next;
+  }, []);
+
   const playVideoById = useCallback(
     (id: string, known?: XyzVideo) => {
       ensureAudioContext();
+      const session = startPlaybackSession(id);
       setActiveVideoId(id);
       activeVideoIdRef.current = id;
       setStreamUrl(null);
@@ -457,10 +470,10 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
               }
             : null)
       );
-      loadMeta(id);
+      loadMeta(id, session);
 
       if (playbackModeRef.current === "native") {
-        loadNativeSources(id);
+        loadNativeSources(id, session);
       } else if (iframeLoadedRef.current) {
         sendPlayerCommand("loadVideoById", [id, 0]);
         sendPlayerCommand("unMute");
@@ -471,7 +484,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
         }
       }
     },
-    [sendPlayerCommand, resetPlaybackState, loadNativeSources, loadMeta]
+    [sendPlayerCommand, resetPlaybackState, loadNativeSources, loadMeta, startPlaybackSession]
   );
 
   // Play a self-hosted HLS (.m3u8) stream through hls.js
@@ -518,21 +531,25 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   });
 
   const retryPlayback = useCallback(() => {
+    const session = startPlaybackSession(activeVideoIdRef.current);
     setPlaybackError(null);
-    if (dashUrls) shaka.retry();
-    else loadNativeSources(activeVideoIdRef.current);
-  }, [dashUrls, shaka, loadNativeSources]);
+    if (dashUrls) {
+      shaka.retry();
+      return;
+    }
+    loadNativeSources(activeVideoIdRef.current, session);
+  }, [dashUrls, shaka, loadNativeSources, startPlaybackSession]);
 
   // Entering native mode (initial load or settings change) resolves sources for the current video;
   // leaving it hands playback back to the iframe.
   useEffect(() => {
-    if (streamUrlStateRef.current) return;
+    if (streamUrlStateRef.current || view.type !== "watch") return;
     const timer = setTimeout(() => {
-      if (playbackMode === "native") loadNativeSources(activeVideoIdRef.current);
+      if (playbackMode === "native") loadNativeSources(activeVideoIdRef.current, playbackSessionRef.current);
       else setDashUrls(null);
     }, 0);
     return () => clearTimeout(timer);
-  }, [playbackMode, loadNativeSources]);
+  }, [playbackMode, loadNativeSources, view.type]);
 
   // Read URL search params safely on mount
   useEffect(() => {
@@ -546,8 +563,9 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
     }
   }, [playVideoById, initialVideoId]);
 
-  // Warm-up on load: Shaka's chunk, and connections to the media servers (last known first).
+  // Warm-up on deliberate watch sessions only: no home-page polling or playback setup for browse screens.
   useEffect(() => {
+    if (view.type !== "watch") return;
     try {
       preconnectMedia(JSON.parse(readSetting(MEDIA_ORIGINS_KEY) || "[]"));
     } catch {}
@@ -562,7 +580,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
         .catch(() => {});
     }, 0);
     return () => clearTimeout(timer);
-  }, []);
+  }, [view.type]);
 
   // Once a video is playing, quietly fetch the next one's manifest so skipping ahead starts fast
   // (it warms the CDN, and the browser may reuse it for a few minutes).
@@ -949,6 +967,27 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
     setShowSettings(true);
   };
 
+  useEffect(() => {
+    if (!showSettings) return;
+    const dialog = settingsDialogRef.current;
+    const previous = document.activeElement as HTMLElement | null;
+    const focusTarget = dialog?.querySelector<HTMLElement>("input, button, [tabindex]:not([tabindex='-1'])") ?? null;
+    focusTarget?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setShowSettings(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previous?.focus?.();
+    };
+  }, [showSettings]);
+
   const refreshYouTubeHome = (key: string) => {
     if (!key || !YOUTUBE_API_KEY.test(key.trim())) {
       setYoutubeValidationState("idle");
@@ -1220,10 +1259,11 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
           onClick={() => setShowSettings(false)}
         >
           <div
+            ref={settingsDialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="settings-title"
-            className="w-full max-w-sm rounded-xl bg-popover p-5 shadow-2xl"
+            className="w-full max-w-sm rounded-xl border border-border bg-popover p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3">

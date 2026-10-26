@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Flame, HeartCrack, Play, Sparkles, Terminal, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play } from "lucide-react";
 import type { XyzVideo } from "@/lib/xyz";
 import { SECTIONS } from "@/lib/content/sections";
 
@@ -99,7 +99,7 @@ export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip:
     <div className="relative border-b border-border">
       <div
         ref={scrollerRef}
-        role="tablist"
+        role="group"
         aria-label="Filter videos"
         onScroll={updateEdges}
         className="flex gap-5 overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -110,8 +110,7 @@ export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip:
             <button
               key={id}
               type="button"
-              role="tab"
-              aria-selected={selected}
+              aria-pressed={selected}
               onClick={() => onSelect(id)}
               className={`-mb-px shrink-0 border-b-2 pb-2.5 pt-1 text-sm font-medium transition-colors cursor-pointer ${
                 selected
@@ -278,9 +277,9 @@ export function VideoCard({
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      className={`group flex h-full w-full flex-col gap-3 text-left cursor-pointer focus-visible:rounded-2xl ${featured ? "sm:col-span-2 lg:row-span-2" : ""}`}
+      className="group flex h-full w-full flex-col gap-3 text-left cursor-pointer focus-visible:rounded-2xl"
     >
-      <span className={`relative block aspect-video w-full overflow-hidden rounded-2xl bg-muted transition-shadow ${selected ? "ring-2 ring-brand" : "ring-1 ring-border group-hover:ring-2 group-hover:ring-brand/70 group-focus-visible:ring-2 group-focus-visible:ring-brand"}`}>
+      <span className={`relative block aspect-video w-full overflow-hidden rounded-xl bg-muted transition-shadow ${selected ? "ring-2 ring-brand" : "ring-1 ring-border group-hover:ring-2 group-hover:ring-brand/80 group-focus-visible:ring-2 group-focus-visible:ring-brand"}`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={video.thumbnailUrl || `/api/xyz/thumb/${video.id}`}
@@ -290,25 +289,21 @@ export function VideoCard({
         />
         <span
           aria-hidden="true"
-          className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/25"
+          className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/20"
         >
-          <span className="flex h-12 w-12 scale-90 items-center justify-center rounded-full bg-brand text-primary-foreground opacity-0 transition-all group-hover:scale-100 group-hover:opacity-100">
-            <Play className="size-5 translate-x-px fill-current" />
+          <span className="flex h-10 w-10 scale-90 items-center justify-center rounded-full bg-brand text-primary-foreground opacity-0 transition-all group-hover:scale-100 group-hover:opacity-100">
+            <Play className="size-4 translate-x-px fill-current" />
           </span>
         </span>
         <DurationPill video={video} className="absolute left-2.5 top-2.5" />
       </span>
-      <span className="flex flex-col gap-1 px-0.5">
-        <span
-          className={`line-clamp-2 font-display font-semibold leading-snug text-foreground ${
-            featured ? "text-xl sm:text-2xl" : "text-base"
-          }`}
-        >
+      <span className="flex min-w-0 flex-col gap-1 px-0.5">
+        <span className="line-clamp-2 font-display font-semibold leading-snug text-foreground text-base">
           {video.title}
         </span>
         <span className="text-xs text-muted-foreground">{metaLine(video)}</span>
         {featured && video.description && (
-          <span className="mt-1 line-clamp-3 max-w-prose text-sm leading-6 text-muted-foreground">
+          <span className="line-clamp-2 text-sm leading-6 text-muted-foreground">
             {video.description}
           </span>
         )}
@@ -389,176 +384,7 @@ export function SearchResults({
   );
 }
 
-export interface MemeSlide {
-  id: string;
-  badge: string;
-  icon: "broken-heart" | "flame" | "code" | "sparkles";
-  title: string;
-  message: string;
-  actionText?: string;
-  actionChip?: string;
-}
-
-export const MEME_SLIDES: MemeSlide[] = [
-  {
-    id: "meme-crush",
-    badge: "HEARTBREAK SURVIVAL",
-    icon: "broken-heart",
-    title: "Chhop srolanh ke mneak eng tv...",
-    message: "ឈប់ស្រឡាញ់គេម្នាក់ឯងទៅ... បើ crush មិនតប chat មកស្ដាប់ចម្រៀង Tena & Suly Pheng បំភ្លេចទុក្ខ ឬរៀន Coding រក $3k/ខែ ឱ្យគេស្ដាយក្រោយវិញ!",
-    actionText: "Hear Healing Hits",
-    actionChip: "music",
-  },
-  {
-    id: "khmer-flow",
-    badge: "FLOW & ENERGY",
-    icon: "flame",
-    title: "VannDa, Baramey & The New Wave",
-    message: "បទល្បីៗមិនទាន់ចេញក្ដៅៗ ស្ដាប់ច្បាស់ត្រចៀកកម្រិត Hi-Fi គ្មាន ad រំខាន ជាមួយ floating mini-player ជាប់អេក្រង់ជានិច្ច។",
-    actionText: "Play Khmer Wave",
-    actionChip: "new-khmer",
-  },
-  {
-    id: "deep-learning",
-    badge: "GRIND & TECH",
-    icon: "code",
-    title: "Build, Learn & Upgrade Your Career",
-    message: "ពី Harvard CS50, Python, React រហូតដល់វិទ្យាសាស្ត្រលំហ។ រៀនដោយផ្តោតអារម្មណ៍ គ្មាន recommendation loop នាំឱ្យវង្វេង។",
-    actionText: "Start Learning",
-    actionChip: "learning",
-  },
-  {
-    id: "zen-focus",
-    badge: "NIGHT PRODUCTIVITY",
-    icon: "sparkles",
-    title: "Pure Sound, Zero Bullshit",
-    message: "xyz player រចនាឡើងសម្រាប់អ្នកចូលចិត្តបទភ្លេង និងចំណេះដឹង។ minimize បានគ្រប់ពេល និង search រកអ្វីក៏ងាយស្រួល។",
-    actionText: "Explore Lo-Fi",
-    actionChip: "lofi",
-  },
-];
-
-function SlideIcon({ type }: { type: MemeSlide["icon"] }) {
-  switch (type) {
-    case "broken-heart":
-      return <HeartCrack className="size-5 text-brand" />;
-    case "flame":
-      return <Flame className="size-5 text-amber-500" />;
-    case "code":
-      return <Terminal className="size-5 text-emerald-500" />;
-    case "sparkles":
-      return <Sparkles className="size-5 text-cyan-400" />;
-  }
-}
-
-export function MemeCarouselBanner({
-  slides = MEME_SLIDES,
-  onAction,
-  onDismiss,
-}: {
-  slides?: MemeSlide[];
-  onAction: (chip: string) => void;
-  onDismiss?: () => void;
-}) {
-  const [currentIdx, setCurrentIdx] = useState(0);
-  const slide = slides[currentIdx] || slides[0];
-
-  useEffect(() => {
-    if (slides.length <= 1) return;
-    const timer = setInterval(() => {
-      setCurrentIdx((prev) => (prev + 1) % slides.length);
-    }, 6500);
-    return () => clearInterval(timer);
-  }, [slides.length]);
-
-  const prevSlide = () => setCurrentIdx((prev) => (prev - 1 + slides.length) % slides.length);
-  const nextSlide = () => setCurrentIdx((prev) => (prev + 1) % slides.length);
-
-  return (
-    <div className="relative overflow-hidden rounded-2xl border border-brand/30 bg-gradient-to-r from-brand/10 via-background/90 to-card p-4 sm:p-5 shadow-xl backdrop-blur min-h-[106px] sm:min-h-[92px] flex flex-col justify-center">
-      <div className="flex flex-col gap-3.5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-4 flex-1 min-w-0">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-card border border-border/80 shadow-md">
-            <SlideIcon type={slide.icon} />
-          </div>
-          <div key={slide.id} className="flex flex-col gap-1 min-w-0 flex-1 animate-fadeIn">
-            <div className="flex items-center gap-2">
-              <span className="rounded-md bg-brand px-2 py-0.5 font-display text-[10px] font-extrabold tracking-wider text-primary-foreground uppercase shadow-sm shrink-0">
-                {slide.badge}
-              </span>
-              <h3 className="font-display text-sm font-bold text-foreground sm:text-base truncate">
-                {slide.title}
-              </h3>
-            </div>
-            <div className="h-10 sm:h-9 flex items-center">
-              <p className="text-xs font-normal leading-relaxed text-muted-foreground sm:text-sm line-clamp-2 max-w-2xl">
-                {slide.message}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 self-end sm:self-center shrink-0">
-          {/* Slide dots and nav arrows */}
-          <div className="flex items-center gap-1.5 bg-background/50 border border-border/60 rounded-full px-2 py-1 shadow-inner">
-            <button
-              type="button"
-              onClick={prevSlide}
-              aria-label="Previous slide"
-              className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
-            >
-              <ChevronLeft className="size-3.5" />
-            </button>
-            <div className="flex items-center gap-1.5 px-1">
-              {slides.map((s, idx) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => setCurrentIdx(idx)}
-                  className={`h-2 rounded-full transition-all cursor-pointer ${
-                    idx === currentIdx ? "w-5 bg-brand" : "w-2 bg-muted-foreground/30 hover:bg-muted-foreground/50"
-                  }`}
-                  aria-label={`Go to slide ${idx + 1}`}
-                />
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={nextSlide}
-              aria-label="Next slide"
-              className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
-            >
-              <ChevronRight className="size-3.5" />
-            </button>
-          </div>
-
-          {slide.actionText && (
-            <button
-              type="button"
-              onClick={() => onAction(slide.actionChip || "music")}
-              className="h-8 rounded-full bg-foreground px-4 text-xs font-semibold text-background transition-transform active:scale-95 hover:opacity-90 cursor-pointer shadow-sm flex items-center justify-center"
-            >
-              {slide.actionText}
-            </button>
-          )}
-
-          {onDismiss && (
-            <button
-              type="button"
-              onClick={onDismiss}
-              aria-label="Dismiss banner"
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/50 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer shadow-sm"
-            >
-              <X className="size-4" />
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Home feed: banner alert, chip tabs, and card grid matching search page layout with featured hero card. */
+/** Home feed: chip tabs and a quiet card grid without a rotating banner. */
 export function HomeFeed({
   videos,
   activeChip,
@@ -586,32 +412,22 @@ export function HomeFeed({
   activeVideoId?: string;
   emptyIsError?: boolean;
 }) {
-  const [showBanner, setShowBanner] = useState<boolean>(true);
-
   return (
     <section aria-labelledby="home-heading" className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-4 pb-20 pt-4 sm:px-6">
-      {sourceLabel && (
-        <div className="flex items-center gap-2">
-          <span className="rounded-full border border-brand/60 bg-brand/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-brand">
+      <div className="flex items-center justify-between gap-3 pt-1">
+        {sourceLabel ? (
+          <span className="rounded-full border border-border bg-muted px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {sourceLabel}
           </span>
-        </div>
-      )}
+        ) : (
+          <span className="text-sm text-muted-foreground">Discover</span>
+        )}
+      </div>
 
-      {/* 1. Customizable meme / announcement slide banner */}
-      {showBanner && (
-        <MemeCarouselBanner
-          onAction={(chip) => onSelectChip(chip)}
-          onDismiss={() => setShowBanner(false)}
-        />
-      )}
-
-      {/* 2. Chip bar filter tabs */}
       <div className="sticky top-14 z-30 -mx-4 bg-background/95 px-4 backdrop-blur sm:-mx-6 sm:px-6">
         <ChipBar active={activeChip} onSelect={onSelectChip} />
       </div>
 
-      {/* 3. Grid listing matching search page concept with first featured card */}
       {loading ? (
         <div className="grid grid-cols-1 gap-x-5 gap-y-8 sm:grid-cols-2 lg:grid-cols-4" aria-busy="true">
           {Array.from({ length: 9 }).map((_, i) => (
@@ -630,10 +446,10 @@ export function HomeFeed({
         <>
           <ul className="grid grid-cols-1 gap-x-5 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
             {videos.map((video, idx) => (
-              <li key={`${video.id}-${idx}`} className={idx === 0 ? "sm:col-span-2 lg:row-span-2" : ""}>
+              <li key={`${video.id}-${idx}`}>
                 <VideoCard
                   video={video}
-                  featured={idx === 0}
+                  featured={false}
                   selected={video.id === activeVideoId}
                   onSelect={() => onSelectVideo(video)}
                 />

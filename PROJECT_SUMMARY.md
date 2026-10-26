@@ -2,39 +2,34 @@
 
 ## Overview
 
-XYZ is a cinematic, distraction-free video workspace built with Next.js 16. The project is designed around an immersive media experience: large playback surfaces, ambient visual treatment, and keyboard-first controls that keep the focus on content instead of cluttered UI.
+XYZ is a neutral video browser for music and learning, built with Next.js 16. The project emphasizes content discovery, dependable playback sessions, and a quiet interface that stays out of the way while the user watches or browses.
 
 ## Core Product Features
 
-### 1. Cinematic media stage
-- Full-screen, immersive video canvas with ambient glow and color-driven visual treatment.
-- Designed to feel like a focused "cinema stage" rather than a traditional social video feed.
-- Encourages attention on playback, discovery, and flow rather than page clutter.
+### 1. Minimal, calm interface
+- Neutral charcoal surfaces and restrained contrast rather than bright color treatments.
+- Clear English and Khmer-friendly typography that stays legible across cards, headers, and player metadata.
+- A calmer, content-first browsing pattern without a rotating promotional banner or oversized hero card.
 
-### 2. Keyboard-first controls
-- Playback shortcuts such as play/pause, seek, next/previous media, and mute toggles.
-- Optimized for fast navigation without needing to move the mouse often.
-- Includes standard hotkey patterns for a smoother, streamlined interface.
+### 2. Playback reliability
+- Explicit playback sessions prevent stale metadata and old request handlers from overwriting the active attempt.
+- Retry and selection flows create fresh session attempts so same-video retries and rapid switching stay predictable.
+- The app keeps provider limitations explicit instead of pretending unsupported playback is universally available.
 
-### 3. Adaptive workspace modes
-- Zen Stage for a minimal, borderless playback experience.
-- Studio Split for a dual-view layout with queue and supporting content.
-- Focus Mode for more ambient, minimal audio-first sessions.
-- Supports different user contexts without changing the underlying media workflow.
+### 3. Lightweight discovery
+- Home browsing avoids triggering media-engine startup or manifest resolution until the user deliberately opens a watch session.
+- Discovery and search prioritize fast rendering and relevant thumbnails without speculative playback warm-up.
+- Search history is kept local and request state is protected against stale responses.
 
-### 4. Command center / spotlight interface
-- Unified command palette for quick actions and media entry.
-- Supports fast ingestion of links or IDs, custom feed navigation, and workspace switching.
-- Helps centralize discovery and control in one compact interaction layer.
+### 4. Keyboard and accessibility
+- Settings focus is moved into the dialog with Escape-to-close and focus restoration.
+- Search, controls, and dialogs remain keyboard-friendly without conflicting with editable fields.
+- Video controls reflect actual engine capabilities instead of overlaying unsupported UI.
 
-### 5. Persistent background playback
-- Audio keep-alive behavior helps media continue playing when tab focus is lost.
-- Useful for keeping music, talk content, or background sessions active while multitasking.
-
-### 6. Ambient and immersive interface polish
-- Dynamic background effects, floating UI layers, and minimal HUD overlays.
-- Provides a premium visual experience while preserving playback clarity.
-- Makes content feel more like a media workspace than a standard video app.
+### 5. Provider honesty
+- Native playback remains the default for deployed environments where YouTube is restricted or blocked.
+- YouTube embeds are still used when supported, but they are not treated as a universal reliability guarantee.
+- Public instance fallback is treated as best-effort rather than as a promise of a universally playable network path.
 
 ## Content and media model
 

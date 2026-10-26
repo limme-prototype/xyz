@@ -1,38 +1,34 @@
-# xyz 2.0 &bull; Cinematic Video Workspace
+# xyz
 
-A distraction-free, next-generation cinematic video workspace built with Next.js 16 and Bun. Moving away completely from traditional video feed clutter into an ambient, keyboard-first media stage.
+XYZ is a neutral, content-first video browser for music and learning, built with Next.js 16 and React 19. It keeps discovery lightweight, playback session state explicit, and the app chrome quiet enough to stay out of the way.
 
-## ✨ Highlights & New UX
+## What it does
 
-- **Cinema Stage & Ambient Bloom**: Hardware-accelerated dynamic backdrop glow reflecting the dominant color tones of the video, creating an edge-to-edge immersive canvas.
-- **Floating Island HUD**: Controls reveal themselves smoothly on cursor movement or hotkeys, leaving playback unobstructed.
-- **Spotlight Command Palette (`⌘K` or `/`)**: Unified omnibar supporting real-time autocomplete suggestions, raw link/ID ingestion, quick feeds, and workspace mode switching.
-- **Adaptive Workspace Modes**:
-  - **Zen Stage**: Borderless hero canvas for maximum focus.
-  - **Studio Split**: 65/35 sidecar view with queue management, active video notes, and up next list.
-  - **Focus Mode**: Aesthetic audio visualizer with ambient pulse concentric rings for music, lo-fi, and study sessions.
-- **Persistent Background Playback**: Web Audio keep-alive engine ensuring audio continues playing across background tabs.
-- **Keyboard-First Controls**:
-  - `Space` / `K`: Play / Pause
-  - `J` / `L` or `←` / `→`: Seek backward / forward 10s
-  - `N` / `P`: Next / Previous video
-  - `M`: Toggle Picture-in-Picture Mini-Player
-  - `⌘K` / `/`: Open Spotlight Command Palette
-- **Private Recent Searches**: The 10 most recent submitted search terms stay in this browser for up to 90 days. Click the search field to repeat or remove a search, or clear the full history. Terms are stored only in `localStorage`, synchronized across tabs, and are not copied into cookies or sent to a server for history sync.
+- Browses catalog and search content without warming playback infrastructure on the home screen.
+- Keeps native playback, YouTube embeds, and direct HLS sources separated behind clear provider logic.
+- Uses explicit playback sessions so retrying or switching videos cannot overwrite the active attempt.
+- Keeps recent search history private in the browser and avoids leaking API keys into URLs or logs.
+- Uses a restrained neutral palette, clearer typography, and mobile-safe layouts.
 
-## 🚀 Getting Started
+## Run locally
 
 ```bash
-bun install
-bun run dev
+npm install
+npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open http://localhost:3000.
 
-## 🧪 Quality & Tests
+## Verification
 
 ```bash
-bun test
-bun run lint
-bun run build
+npm test
+npm run lint
+npm run build
 ```
+
+## Notes
+
+- Built-in native playback remains the default path for network-restricted environments.
+- YouTube embeds still depend on browser access and provider restrictions.
+- Public playback instances are treated as a best-effort path and are not a universal guarantee for all content.
