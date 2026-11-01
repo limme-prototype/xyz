@@ -4,7 +4,6 @@ import { formatDuration, formatViews, isoDurationSeconds, timeAgo } from "../lib
 import { parseChannelFeed } from "../lib/providers/youtube-rss";
 import { resolveSection } from "../lib/content/resolve";
 import { SECTIONS, findSection, type Section } from "../lib/content/sections";
-import { XYZ_CATALOG_VIDEOS } from "../lib/xyz";
 import { GET as getSectionRoute } from "../app/api/xyz/sections/[id]/route";
 import { getHomeContentMode } from "../app/_components/xyz-player";
 
@@ -82,6 +81,7 @@ describe("sections config", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(SECTIONS[0]).toMatchObject({ id: "all", source: { kind: "seed" } });
     expect(findSection("nope")).toBeUndefined();
+    expect(SECTIONS.map((section) => section.id)).toEqual(expect.arrayContaining(["new-songs", "technology", "security", "deployment"]));
   });
 });
 
@@ -101,6 +101,33 @@ describe("home content mode", () => {
 
 describe("resolveSection", () => {
   const channels: Section = { id: "t", label: "T", source: { kind: "channels", channelIds: [CH_A, CH_B] } };
+
+  it("uses YouTube search for configured-key categories and returns hydrated real video metadata", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes("/youtube/v3/search")) {
+        expect(url).toContain("q=cybersecurity+information+security+tutorial");
+        expect(url).toContain("order=date");
+        return Response.json({ items: [{ id: { videoId: "security123" } }], nextPageToken: "NEXT" });
+      }
+      if (url.includes("/youtube/v3/videos")) {
+        return Response.json({ items: [{
+          id: "security123",
+          snippet: { title: "Cybersecurity deployment lesson", channelTitle: "Security Lab", publishedAt: "2026-10-05T11:00:00Z" },
+          contentDetails: { duration: "PT12M" },
+          statistics: { viewCount: "12000" },
+        }] });
+      }
+      return new Response("", { status: 404 });
+    }));
+
+    const result = await resolveSection(findSection("security")!, { apiKey: KEY, now: NOW });
+    expect(result).toMatchObject({ origin: "youtube", nextPageToken: "NEXT" });
+    expect(result.items[0]).toMatchObject({ id: "security123", title: "Cybersecurity deployment lesson", channel: "Security Lab", duration: "12:00" });
+    expect(calls).toHaveLength(2);
+  });
 
   it("merges channel feeds newest-first, drops Shorts and duplicates, and never exposes YouTube URLs", async () => {
     vi.stubGlobal(
@@ -184,11 +211,18 @@ describe("resolveSection", () => {
     expect((await resolveSection(section, { apiKey: KEY, now: NOW })).origin).toBe("rss");
   });
 
-  it("returns the bundled seed when every source fails", async () => {
+  it("keeps a failed channel filter empty instead of inserting unrelated seed videos", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 503 })));
     const result = await resolveSection(channels, { now: NOW });
-    expect(result.origin).toBe("seed");
-    expect(result.items).toEqual(XYZ_CATALOG_VIDEOS);
+    expect(result.origin).toBe("rss");
+    expect(result.items).toEqual([]);
+  });
+
+  it("does not show unrelated seed videos when a topic search fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 503 })));
+    const result = await resolveSection(findSection("deployment")!, { now: NOW });
+    expect(result.origin).toBe("invidious");
+    expect(result.items).toEqual([]);
   });
 
   it("honors a request-scoped API key when resolving a section-backed home feed", async () => {
@@ -212,6 +246,9 @@ describe("resolveSection", () => {
           ],
         });
       }
+      if (url.includes("googleapis.com/youtube/v3/search")) {
+        return Response.json({ items: [{ id: { videoId: "abc123defgh" } }] });
+      }
       return Response.json({ items: [] });
     });
 
@@ -228,5 +265,16 @@ describe("resolveSection", () => {
     const payload = await response.json();
     expect(payload.items[0]).toMatchObject({ id: "abc123defgh", title: "Real API video", channel: "API Channel" });
     expect(fetchSpy).toHaveBeenCalled();
+  });
+
+  it("serves the All seed list without leaking blocked YouTube channel URLs", async () => {
+    const response = await getSectionRoute(
+      new Request("http://localhost/api/xyz/sections/all"),
+      { params: Promise.resolve({ id: "all" }) }
+    );
+    const payload = await response.json();
+    expect(response.status).toBe(200);
+    expect(payload.items.length).toBeGreaterThan(0);
+    expect(findBlockedUrls(payload)).toEqual([]);
   });
 });

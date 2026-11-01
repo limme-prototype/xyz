@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Play } from "lucide-react";
 import { LayoutGroup, MotionConfig, motion } from "motion/react";
+import type { HeroOrigin } from "@/lib/motion";
 import type { XyzVideo } from "@/lib/xyz";
 import { SECTIONS } from "@/lib/content/sections";
 
@@ -86,9 +87,19 @@ export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip:
   }, [updateEdges]);
 
   useEffect(() => {
-    scrollerRef.current
-      ?.querySelector<HTMLElement>('[aria-pressed="true"]')
-      ?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    const container = scrollerRef.current;
+    const activeChip = container?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (container && activeChip) {
+      const chipLeft = activeChip.offsetLeft;
+      const chipRight = chipLeft + activeChip.offsetWidth;
+      const scrollLeft = container.scrollLeft;
+      const containerWidth = container.clientWidth;
+      if (chipLeft < scrollLeft) {
+        container.scrollTo({ left: chipLeft - 8, behavior: "smooth" });
+      } else if (chipRight > scrollLeft + containerWidth) {
+        container.scrollTo({ left: chipRight - containerWidth + 8, behavior: "smooth" });
+      }
+    }
   }, [active]);
 
   const scrollBy = (direction: 1 | -1) => {
@@ -184,7 +195,7 @@ export function UpNextList({
   loadingMore?: boolean;
   onLoadMore?: () => void;
 }) {
-  if (loading) {
+  if (loading && videos.length === 0) {
     return (
       <div className="flex flex-col gap-1 pt-2" aria-busy="true" aria-label="Loading videos">
         {Array.from({ length: 8 }).map((_, i) => (
@@ -206,16 +217,28 @@ export function UpNextList({
   }
 
   return (
-    <ol className="flex flex-col pt-2">
+    <ol className={`flex flex-col pt-1 sm:pt-2 transition-opacity duration-200 ${loading ? "opacity-50 pointer-events-none" : "opacity-100"}`}>
       {videos.map((video, idx) => {
         const active = video.id === activeId;
         return (
-          <li key={`${video.id}-${idx}`}>
-            <button
+          <motion.li
+            key={`${video.id}-${idx}`}
+            initial={{ opacity: 0, x: 8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{
+              type: "spring",
+              bounce: 0,
+              duration: 0.32,
+              delay: Math.min(idx * 0.02, 0.16),
+            }}
+          >
+            <motion.button
               type="button"
               onClick={() => onSelect(video)}
+              whileTap={{ scale: 0.98 }}
+              transition={{ type: "spring", bounce: 0, duration: 0.2 }}
               aria-current={active ? "true" : undefined}
-      className={`interactive group flex w-full items-center gap-3 rounded-[var(--radius-md)] p-2 text-left transition-colors cursor-pointer ${
+              className={`interactive group flex w-full items-center gap-3 rounded-[var(--radius-md)] p-2 text-left transition-colors cursor-pointer ${
                 active
                   ? "bg-[rgba(10,132,255,0.12)]"
                   : "hover:bg-[var(--ios-fill-4)]"
@@ -230,13 +253,13 @@ export function UpNextList({
                   src={video.thumbnailUrl || `/api/xyz/thumb/${video.id}`}
                   alt=""
                   loading="lazy"
-                  className="h-full w-full object-cover"
+                  className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                 />
                 {active && <span aria-hidden="true" className="absolute inset-0 rounded-lg ring-2 ring-inset ring-brand" />}
               </span>
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span
-                  className={`line-clamp-2 font-medium leading-[1.3] ${active ? "" : ""}`}
+                  className="line-clamp-2 font-medium leading-[1.3] transition-colors group-hover:text-[var(--ios-blue)]"
                   style={{
                     fontSize: "var(--text-callout)",
                     color: active ? "var(--ios-blue)" : "var(--ios-label)",
@@ -256,8 +279,8 @@ export function UpNextList({
                         .join(" · ")}
                 </span>
               </span>
-            </button>
-          </li>
+            </motion.button>
+          </motion.li>
         );
       })}
       {hasMore && onLoadMore && (
@@ -284,41 +307,62 @@ export function VideoCard({
   video,
   featured,
   selected = false,
+  hero = true,
   onSelect,
 }: {
   video: XyzVideo;
   featured: boolean;
   selected?: boolean;
-  onSelect: () => void;
+  /** False for a duplicate id in the same feed: only the first can fly. */
+  hero?: boolean;
+  onSelect: (origin: HeroOrigin) => void;
 }) {
+  const thumbRef = useRef<HTMLImageElement>(null);
+
+  const select = () => {
+    const r = thumbRef.current?.getBoundingClientRect();
+    onSelect(r ? { x: r.left, y: r.top, w: r.width, h: r.height } : null);
+  };
+
   return (
-    <button
+    <motion.button
       type="button"
-      onClick={onSelect}
+      onClick={select}
       aria-pressed={selected}
-      className="group flex h-full w-full flex-col gap-3 text-left cursor-pointer focus-visible:rounded-[var(--radius-lg)]"
+      whileHover={{ y: -2 }}
+      whileTap={{ scale: 0.985 }}
+      transition={{ type: "tween", duration: 0.18, ease: "easeOut" }}
+      className="group flex h-full w-full flex-col gap-3 text-left cursor-pointer focus-visible:rounded-[var(--radius-lg)] outline-none"
     >
-      <span className={`interactive relative block aspect-video w-full overflow-hidden rounded-[var(--radius-lg)] bg-muted transition-shadow ${selected ? "ring-2 ring-brand" : "ring-1 ring-border group-hover:ring-2 group-hover:ring-brand/80 group-focus-visible:ring-2 group-focus-visible:ring-brand"}`}>
+      <span
+        className={`relative block aspect-video w-full overflow-hidden rounded-[var(--radius-lg)] bg-muted shadow-[0_4px_14px_rgba(0,0,0,0.35)] transition-shadow duration-200 ease-out group-hover:shadow-[0_12px_28px_-8px_rgba(0,0,0,0.65)] ${
+          selected
+            ? "ring-2 ring-[var(--ios-blue)]"
+            : "ring-1 ring-[var(--ios-separator)] group-hover:ring-2 group-hover:ring-[var(--ios-blue)]/80 group-focus-visible:ring-2 group-focus-visible:ring-[var(--ios-blue)]"
+        }`}
+      >
+        {/* The card's own frame; on select its rect is handed to <HeroFlight>. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
+          ref={hero ? thumbRef : undefined}
           src={video.thumbnailUrl || `/api/xyz/thumb/${video.id}`}
           alt=""
           loading="lazy"
-          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+          className="h-full w-full object-cover transition-transform duration-300 ease-out motion-reduce:transition-none group-hover:scale-[1.025] group-focus-visible:scale-[1.025]"
         />
         <span
           aria-hidden="true"
-          className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/20"
+          className="absolute inset-0 flex items-center justify-center bg-gradient-to-t from-black/20 via-transparent to-black/10 opacity-0 transition-opacity duration-200 ease-out motion-reduce:transition-none group-hover:opacity-100 group-focus-visible:opacity-100"
         >
-          <span className="flex h-10 w-10 scale-90 items-center justify-center rounded-full bg-brand text-primary-foreground opacity-0 transition-all group-hover:scale-100 group-hover:opacity-100">
-            <Play className="size-4 translate-x-px fill-current" />
+          <span className="flex h-11 w-11 scale-90 items-center justify-center rounded-full bg-black/65 text-white opacity-0 shadow-lg transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none group-hover:scale-100 group-hover:opacity-100 group-focus-visible:scale-100 group-focus-visible:opacity-100">
+            <Play className="size-4.5 translate-x-px fill-current text-white" />
           </span>
         </span>
         <DurationPill video={video} className="absolute left-2.5 top-2.5" />
       </span>
       <span className="flex min-w-0 flex-col gap-1 px-0.5">
         <span
-          className={`line-clamp-2 font-display font-semibold leading-snug text-foreground ${
+          className={`line-clamp-2 font-display font-semibold leading-snug text-foreground transition-colors group-hover:text-[var(--ios-blue)] ${
             featured
               ? "text-title-2 sm:text-title-1 tracking-[var(--tracking-title-2)] sm:tracking-[var(--tracking-title-1)]"
               : "text-callout tracking-[var(--tracking-callout)]"
@@ -333,7 +377,7 @@ export function VideoCard({
           </span>
         )}
       </span>
-    </button>
+    </motion.button>
   );
 }
 
@@ -352,7 +396,7 @@ export function SearchResults({
   loading: boolean;
   error: string | null;
   activeVideoId?: string;
-  onSelect: (video: XyzVideo) => void;
+  onSelect: (video: XyzVideo, origin: HeroOrigin) => void;
   onRetry: () => void;
 }) {
   return (
@@ -394,14 +438,26 @@ export function SearchResults({
       ) : (
         <ul className="grid grid-cols-1 gap-x-5 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
           {videos.map((video, idx) => (
-            <li key={`${video.id}-${idx}`} className={idx === 0 ? "sm:col-span-2 lg:row-span-2" : ""}>
+            <motion.li
+              key={`${video.id}-${idx}`}
+              className={idx === 0 ? "sm:col-span-2 lg:row-span-2" : ""}
+              initial={{ opacity: 0, y: 14, scale: 0.985 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{
+                type: "tween",
+                duration: 0.22,
+                ease: "easeOut",
+                delay: Math.min(idx * 0.015, 0.1),
+              }}
+            >
               <VideoCard
                 video={video}
                 featured={idx === 0}
                 selected={video.id === activeVideoId}
-                onSelect={() => onSelect(video)}
+                hero={videos.findIndex((v) => v.id === video.id) === idx}
+                onSelect={(origin) => onSelect(video, origin)}
               />
-            </li>
+            </motion.li>
           ))}
         </ul>
       )}
@@ -431,31 +487,115 @@ export function HomeFeed({
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
-  onSelectVideo: (video: XyzVideo) => void;
+  onSelectVideo: (video: XyzVideo, origin: HeroOrigin) => void;
   sourceLabel?: string;
   emptyMessage?: string;
   activeVideoId?: string;
   emptyIsError?: boolean;
 }) {
+  const [filterVisible, setFilterVisible] = useState(true);
+
+  useEffect(() => {
+    let ticking = false;
+    let lastScrollY = typeof window !== "undefined" ? window.scrollY : 0;
+    let accumulatedDelta = 0;
+    const hideThreshold = 16;
+    const revealThreshold = 12;
+
+    const updateScrollDir = () => {
+      const scrollY = window.scrollY;
+      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+
+      // Always show when near the top (and during top bounce)
+      if (scrollY < 60) {
+        setFilterVisible(true);
+        accumulatedDelta = 0;
+        lastScrollY = scrollY;
+        ticking = false;
+        return;
+      }
+
+      // Avoid erratic toggle when bouncing at the bottom of the page
+      if (scrollY >= maxScroll - 24) {
+        ticking = false;
+        return;
+      }
+
+      const delta = scrollY - lastScrollY;
+      lastScrollY = scrollY;
+
+      if (delta > 0) {
+        // Scrolling downward through content
+        if (accumulatedDelta < 0) accumulatedDelta = 0;
+        accumulatedDelta += delta;
+        if (accumulatedDelta > hideThreshold) {
+          setFilterVisible(false);
+        }
+      } else if (delta < 0) {
+        // Scrolling back upward: immediately reset downward momentum and accumulate upward travel
+        if (accumulatedDelta > 0) accumulatedDelta = 0;
+        accumulatedDelta += delta;
+        if (accumulatedDelta < -revealThreshold) {
+          setFilterVisible(true);
+        }
+      }
+
+      ticking = false;
+    };
+
+    const onScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(updateScrollDir);
+        ticking = true;
+      }
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   return (
     <section aria-labelledby="home-heading" className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-4 pb-[calc(var(--mini-clear,0px)+var(--space-5)+var(--space-4))] pt-4 sm:px-6">
-      <div className="flex items-center justify-between gap-3 pt-1">
-        {sourceLabel ? (
+      {sourceLabel && (
+        <div className="flex items-center justify-between gap-3 pt-1">
           <span className="rounded-full border border-border bg-muted px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {sourceLabel}
           </span>
-        ) : (
-          <span className="text-subhead text-[var(--ios-label-2)]">Discover</span>
-        )}
-      </div>
-
-      <div className="sticky top-[calc(var(--nav-height)+var(--space-3))] z-30 -mx-4 px-4 sm:-mx-6 sm:px-6">
-        <div className="w-fit max-w-full rounded-full glass-regular px-1 shadow-[0_6px_20px_rgba(0,0,0,0.24)]">
-          <ChipBar active={activeChip} onSelect={onSelectChip} />
         </div>
-      </div>
+      )}
 
-      {loading ? (
+      <MotionConfig reducedMotion="user">
+        <motion.div
+          data-filter-bar="true"
+          className="sticky top-[calc(var(--nav-height)+var(--space-3))] z-30 -mx-4 px-4 sm:-mx-6 sm:px-6"
+          animate={{
+            y: filterVisible ? 0 : -12,
+            opacity: filterVisible ? 1 : 0,
+            scale: filterVisible ? 1 : 0.98,
+          }}
+          transition={{
+            type: "spring",
+            bounce: 0,
+            duration: 0.3,
+          }}
+          style={{
+            pointerEvents: filterVisible ? "auto" : "none",
+          }}
+        >
+          <div className="flex flex-col gap-1.5">
+            <div className="w-fit max-w-full rounded-full glass-regular px-1 shadow-[0_6px_20px_rgba(0,0,0,0.24)]">
+              <ChipBar active={activeChip} onSelect={onSelectChip} />
+            </div>
+            {loading && (
+              <div className="h-0.5 w-36 overflow-hidden rounded-full bg-[var(--ios-fill-3)] ml-2" aria-hidden="true">
+                <div className="h-full w-1/3 animate-indeterminate rounded-full bg-[var(--ios-blue)]" />
+              </div>
+            )}
+          </div>
+        </motion.div>
+      </MotionConfig>
+
+      {loading && videos.length === 0 ? (
         <div className="grid grid-cols-1 gap-x-5 gap-y-8 sm:grid-cols-2 lg:grid-cols-4" aria-busy="true">
           {Array.from({ length: 9 }).map((_, i) => (
             <div key={i} className={`flex flex-col gap-3 ${i === 0 ? "sm:col-span-2 lg:row-span-2" : ""}`}>
@@ -471,21 +611,33 @@ export function HomeFeed({
         </div>
       ) : (
         <>
-          <ul className="grid grid-cols-1 gap-x-5 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
+          <motion.ul
+            key={activeChip}
+            className={`grid grid-cols-1 gap-x-5 gap-y-8 sm:grid-cols-2 lg:grid-cols-4 transition-opacity duration-200 ${loading ? "opacity-50 pointer-events-none" : "opacity-100"}`}
+          >
             {videos.map((video, idx) => (
-              <li
+              <motion.li
                 key={`${video.id}-${idx}`}
                 className={idx === 0 ? "sm:col-span-2 lg:row-span-2" : ""}
+                initial={{ opacity: 0, y: 14, scale: 0.985 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{
+                  type: "tween",
+                  duration: 0.22,
+                  ease: "easeOut",
+                  delay: Math.min(idx * 0.015, 0.1),
+                }}
               >
                 <VideoCard
                   video={video}
                   featured={idx === 0}
                   selected={video.id === activeVideoId}
-                  onSelect={() => onSelectVideo(video)}
+                  hero={videos.findIndex((v) => v.id === video.id) === idx}
+                  onSelect={(origin) => onSelectVideo(video, origin)}
                 />
-              </li>
+              </motion.li>
             ))}
-          </ul>
+          </motion.ul>
 
           {hasMore && onLoadMore && (
             <div className="flex justify-center pt-8">

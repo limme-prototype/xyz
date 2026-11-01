@@ -1,8 +1,8 @@
 import { isoDurationSeconds } from "./format";
 
 /**
- * YouTube Data API v3, server-side only. Every call used here costs 1 quota unit
- * (10,000 units/day free). search.list is deliberately never used: it is capped at 100 calls/day.
+ * YouTube Data API v3, server-side only. Search requests use a separate daily quota bucket,
+ * so category search is only performed when requested and results are cached by the section API.
  */
 const API = "https://www.googleapis.com/youtube/v3";
 
@@ -110,4 +110,29 @@ export async function mostPopular(regionCode: string, key: string, categoryId?: 
   if (categoryId) params.videoCategoryId = categoryId;
   const data = await get<{ items?: VideoResource[] }>("videos", params, key);
   return (data?.items ?? []).map(toVideo).filter((v): v is DataApiVideo => v !== null);
+}
+
+/** Search YouTube and hydrate the returned IDs in one videos.list call for duration and views. */
+export async function searchVideos(
+  query: string,
+  key: string,
+  options: { order?: "relevance" | "date" | "viewCount"; regionCode?: string; pageToken?: string } = {}
+): Promise<{ videos: DataApiVideo[]; nextPageToken: string | null }> {
+  const params: Record<string, string> = {
+    part: "snippet",
+    type: "video",
+    q: query,
+    maxResults: "25",
+    order: options.order ?? "relevance",
+  };
+  if (options.regionCode) params.regionCode = options.regionCode;
+  if (options.pageToken) params.pageToken = options.pageToken;
+  const data = await get<{ items?: { id?: { videoId?: string } }[]; nextPageToken?: string }>("search", params, key);
+  const ids = (data?.items ?? []).map((item) => item.id?.videoId).filter((id): id is string => Boolean(id));
+  const videos = ids.length ? await videosById(ids, key) : [];
+  const byId = new Map(videos.map((video) => [video.id, video]));
+  return {
+    videos: ids.map((id) => byId.get(id)).filter((video): video is DataApiVideo => Boolean(video)),
+    nextPageToken: data?.nextPageToken ?? null,
+  };
 }

@@ -2,6 +2,8 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Clock3, Search, Settings, X, ArrowLeft, ArrowUpLeft } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { SPRING } from "@/lib/motion";
 import { parseXyzUrl } from "@/lib/xyz";
 import {
   addSearchHistory,
@@ -298,110 +300,117 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
             </button>
           </div>
 
-          {open && (
-            <div
-              id="search-suggestions"
-              role="listbox"
-              aria-label="Search suggestions and recent searches"
-              onMouseLeave={() => setHighlight(-1)}
-              className="glass-regular absolute left-0 right-0 top-[calc(var(--space-tap)+var(--space-2))] z-50 overflow-hidden rounded-[var(--radius-lg)] border border-[var(--ios-separator)] py-[var(--space-2)] shadow-[0_24px_48px_-12px_rgba(0,0,0,0.7)]"
-            >
-              {history.length > 0 && (
-                <div role="presentation" className="flex items-center justify-between px-[var(--space-4)] pb-1 pt-1">
-                    <p className="text-caption-1 font-semibold uppercase tracking-[var(--tracking-caption)] text-[var(--ios-label-2)]">Recent searches</p>
-                    <button
-                      type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={clearHistory}
-                      className="interactive tap-compact cursor-pointer rounded-[var(--radius-xs)] px-1 py-0.5 text-footnote text-[var(--ios-label-2)] hover:text-[var(--ios-label)] focus-visible:text-[var(--ios-label)]"
-                    >
-                      Clear search history
-                    </button>
-                </div>
-              )}
-              {remoteSuggestions.length > 0 && (
-                <div role="presentation" className="px-[var(--space-4)] pb-1 pt-1 text-caption-1 font-semibold uppercase tracking-[var(--tracking-caption)] text-[var(--ios-label-2)]">
-                  {history.length > 0 && <div className="mb-2 border-t border-[var(--ios-separator)]" />}
-                  Suggestions
-                </div>
-              )}
-              {visibleSuggestions.map((item, i) => (
-                <div
-                  key={`${item.source}-${item.query}`}
-                  role="presentation"
-                  className={`relative flex items-center pr-[var(--space-1)] ${i === highlight ? "bg-[var(--ios-fill-4)]" : ""}`}
+          <AnimatePresence>
+            {open && (
+              <motion.div
+                id="search-suggestions"
+                role="listbox"
+                aria-label="Search suggestions and recent searches"
+                onMouseLeave={() => setHighlight(-1)}
+                className="glass-regular absolute left-0 right-0 top-[calc(var(--space-tap)+var(--space-2))] z-50 overflow-hidden rounded-[var(--radius-lg)] border border-[var(--ios-separator)] py-[var(--space-2)] shadow-[0_24px_48px_-12px_rgba(0,0,0,0.7)]"
+                style={{ transformOrigin: "top center" }}
+                initial={{ opacity: 0, scale: 0.94 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.94 }}
+                transition={SPRING.ui}
                 >
-                  {i === highlight && <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-[3px] rounded-full bg-brand" />}
-                  <button
-                    type="button"
-                    id={`search-suggestion-${i}`}
-                    role="option"
-                    aria-selected={i === highlight}
-                    onMouseEnter={() => setHighlight(i)}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => submit(item.query)}
-                    className="interactive tap-compact flex min-w-0 flex-1 cursor-pointer items-center gap-[var(--space-3)] py-[var(--space-2)] pl-[var(--space-4)] text-left text-body tracking-[var(--tracking-body)]"
+                {history.length > 0 && (
+                  <div role="presentation" className="flex items-center justify-between px-[var(--space-4)] pb-1 pt-1">
+                      <p className="text-caption-1 font-semibold uppercase tracking-[var(--tracking-caption)] text-[var(--ios-label-2)]">Recent searches</p>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={clearHistory}
+                        className="interactive tap-compact cursor-pointer rounded-[var(--radius-xs)] px-1 py-0.5 text-footnote text-[var(--ios-label-2)] hover:text-[var(--ios-label)] focus-visible:text-[var(--ios-label)]"
+                      >
+                        Clear search history
+                      </button>
+                  </div>
+                )}
+                {remoteSuggestions.length > 0 && (
+                  <div role="presentation" className="px-[var(--space-4)] pb-1 pt-1 text-caption-1 font-semibold uppercase tracking-[var(--tracking-caption)] text-[var(--ios-label-2)]">
+                    {history.length > 0 && <div className="mb-2 border-t border-[var(--ios-separator)]" />}
+                    Suggestions
+                  </div>
+                )}
+                {visibleSuggestions.map((item, i) => (
+                  <div
+                    key={`${item.source}-${item.query}`}
+                    role="presentation"
+                    className={`relative flex items-center pr-[var(--space-1)] ${i === highlight ? "bg-[var(--ios-fill-4)]" : ""}`}
                   >
+                    {i === highlight && <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-[3px] rounded-full bg-brand" />}
+                    <button
+                      type="button"
+                      id={`search-suggestion-${i}`}
+                      role="option"
+                      aria-selected={i === highlight}
+                      onMouseEnter={() => setHighlight(i)}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => submit(item.query)}
+                      className="interactive tap-compact flex min-w-0 flex-1 cursor-pointer items-center gap-[var(--space-3)] py-[var(--space-2)] pl-[var(--space-4)] text-left text-body tracking-[var(--tracking-body)]"
+                    >
+                      {item.source === "history" ? (
+                        <Clock3 className={`size-4 shrink-0 ${i === highlight ? "text-[var(--ios-blue)]" : "text-[var(--ios-label-3)]"}`} />
+                      ) : (
+                        <Search className={`size-4 shrink-0 ${i === highlight ? "text-[var(--ios-blue)]" : "text-[var(--ios-label-3)]"}`} />
+                      )}
+                      <span className="truncate">{item.query}</span>
+                    </button>
                     {item.source === "history" ? (
-                      <Clock3 className={`size-4 shrink-0 ${i === highlight ? "text-[var(--ios-blue)]" : "text-[var(--ios-label-3)]"}`} />
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => removeHistoryItem(item.query)}
+                        aria-label={`Remove ${item.query} from search history`}
+                        className="interactive tap-compact flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-[var(--ios-label-3)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-label)]"
+                      >
+                        <X className="size-4" />
+                      </button>
                     ) : (
-                      <Search className={`size-4 shrink-0 ${i === highlight ? "text-[var(--ios-blue)]" : "text-[var(--ios-label-3)]"}`} />
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => fillQuery(item.query)}
+                        title="Fill in search"
+                        aria-label={`Fill search with ${item.query}`}
+                        className="interactive tap-compact flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-[var(--ios-label-3)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-blue)]"
+                      >
+                        <ArrowUpLeft className="size-4" />
+                      </button>
                     )}
-                    <span className="truncate">{item.query}</span>
-                  </button>
-                  {item.source === "history" ? (
-                    <button
-                      type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => removeHistoryItem(item.query)}
-                      aria-label={`Remove ${item.query} from search history`}
-                      className="interactive tap-compact flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-[var(--ios-label-3)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-label)]"
-                    >
-                      <X className="size-4" />
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => fillQuery(item.query)}
-                      title="Fill in search"
-                      aria-label={`Fill search with ${item.query}`}
-                      className="interactive tap-compact flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-[var(--ios-label-3)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-blue)]"
-                    >
-                      <ArrowUpLeft className="size-4" />
-                    </button>
-                  )}
-                </div>
-              ))}
-              {matchingHistory.length === 0 && remoteSuggestions.length === 0 && (
-                <p className="px-[var(--space-4)] py-[var(--space-3)] text-body text-[var(--ios-label-2)]" role="status">
-                  {trimmedQuery.length === 0
-                    ? historyAvailable
-                      ? "Your recent searches will appear here."
-                      : "Search history is unavailable in this browser."
-                    : suggestionsLoading
-                    ? "Loading suggestions..."
-                    : suggestionsFailed
-                    ? "Suggestions are temporarily unavailable. You can still search."
-                    : history.length > 0
-                    ? "No matching recent searches."
-                    : "No recent searches yet."}
-                </p>
-              )}
-              {matchingHistory.length > 0 && suggestionsLoading && (
-                <p className="px-[var(--space-4)] py-[var(--space-2)] text-footnote text-[var(--ios-label-2)]" role="status">Loading suggestions...</p>
-              )}
-              {suggestionsFailed && trimmedQuery.length >= 2 && (
-                <p className="px-[var(--space-4)] py-[var(--space-2)] text-footnote text-[var(--ios-label-2)]" role="status">Suggestions are temporarily unavailable.</p>
-              )}
-              {!historyAvailable && (
-                <p className="px-[var(--space-4)] py-[var(--space-2)] text-footnote text-[var(--ios-label-2)]" role="status">
-                  Search history changes are not being saved in this browser.
-                </p>
-              )}
-            </div>
-          )}
+                  </div>
+                ))}
+                {matchingHistory.length === 0 && remoteSuggestions.length === 0 && (
+                  <p className="px-[var(--space-4)] py-[var(--space-3)] text-body text-[var(--ios-label-2)]" role="status">
+                    {trimmedQuery.length === 0
+                      ? historyAvailable
+                        ? "Your recent searches will appear here."
+                        : "Search history is unavailable in this browser."
+                      : suggestionsLoading
+                      ? "Loading suggestions..."
+                      : suggestionsFailed
+                      ? "Suggestions are temporarily unavailable. You can still search."
+                      : history.length > 0
+                      ? "No matching recent searches."
+                      : "No recent searches yet."}
+                  </p>
+                )}
+                {matchingHistory.length > 0 && suggestionsLoading && (
+                  <p className="px-[var(--space-4)] py-[var(--space-2)] text-footnote text-[var(--ios-label-2)]" role="status">Loading suggestions...</p>
+                )}
+                {suggestionsFailed && trimmedQuery.length >= 2 && (
+                  <p className="px-[var(--space-4)] py-[var(--space-2)] text-footnote text-[var(--ios-label-2)]" role="status">Suggestions are temporarily unavailable.</p>
+                )}
+                {!historyAvailable && (
+                  <p className="px-[var(--space-4)] py-[var(--space-2)] text-footnote text-[var(--ios-label-2)]" role="status">
+                    Search history changes are not being saved in this browser.
+                  </p>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </form>
 
         <div className={`ml-auto items-center gap-1 justify-self-end sm:ml-0 ${mobileSearch ? "hidden sm:flex" : "flex"}`}>

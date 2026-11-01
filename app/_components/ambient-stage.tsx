@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { VideoMeta } from "@/lib/types/player";
 import { Button } from "@/components/ui/button";
 import { SkipBack, SkipForward, Play, Pause, Maximize2, X } from "lucide-react";
 import { PlayerControls, type PlayerControlsProps } from "./player-controls";
+import { AnimatePresence, animate, motion, useMotionValue, type PanInfo } from "motion/react";
+import { SPRING, project } from "@/lib/motion";
+
+/** A downward flick faster than this dismisses the player. */
+const DISMISS_VELOCITY = 500;
 
 export interface StreamVideoEvents {
   onTimeUpdate: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
@@ -37,6 +42,9 @@ interface AmbientStageProps {
   onIframeLoad: () => void;
   isMinimized: boolean;
   isHidden?: boolean;
+  /** True while <HeroFlight> is flying into this box. The stage must sit still
+      at its destination, or the proxy would be chasing a moving target. */
+  heroLanding?: boolean;
   viewType?: "watch" | "home" | "search";
   onToggleMinimize: () => void;
   onClose?: () => void;
@@ -57,6 +65,7 @@ export function AmbientStage({
   onIframeLoad,
   isMinimized,
   isHidden = false,
+  heroLanding = false,
   viewType = "watch",
   onToggleMinimize,
   onClose,
@@ -73,7 +82,9 @@ export function AmbientStage({
       root.style.removeProperty("--mini-clear");
       return;
     }
-    const publish = () => root.style.setProperty("--mini-clear", `${el.getBoundingClientRect().height}px`);
+    /* offsetHeight, not getBoundingClientRect: the layout projection scales the
+       node with a transform while it morphs, and the clearance must not jitter. */
+    const publish = () => root.style.setProperty("--mini-clear", `${el.offsetHeight}px`);
     publish();
     const observer = new ResizeObserver(publish);
     observer.observe(el);
@@ -82,6 +93,63 @@ export function AmbientStage({
       root.style.removeProperty("--mini-clear");
     };
   }, [isMinimized, isHidden, stageRef]);
+
+  /* ── Mini player: free placement inside the viewport ─────────────
+     Position lives entirely in x/y transforms, never in left/top, so the
+     interaction is compositor-only and can be grabbed mid-flight. The travel
+     box is an element, not arithmetic: motion clamps against its rect, which
+     keeps working through resize and orientation changes for free. */
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const edgeRef = useRef<HTMLDivElement | null>(null);
+  const draggable = isMinimized && !isHidden;
+
+  /* Undo/undock is owned by the layout projection; a leftover drag offset
+     would be added on top of it and fling the player off screen. Layout effect,
+     so the offset is gone before anything measures the settled stage box. */
+  useLayoutEffect(() => {
+    x.set(0);
+    y.set(0);
+  }, [isMinimized, x, y]);
+
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (dismissTimer.current) clearTimeout(dismissTimer.current);
+  }, []);
+
+  const onDragEnd = (_: unknown, info: PanInfo) => {
+    const el = stageRef.current;
+    const edge = edgeRef.current;
+    if (!el || !edge) return;
+
+    if (info.velocity.y > DISMISS_VELOCITY && y.get() > 8) {
+      // Slide the rest of the way off the bottom edge, then let the parent hide
+      // the node — the stage must never unmount, or playback dies with it.
+      animate(y, window.innerHeight, { duration: 0.22, ease: "easeOut" });
+      dismissTimer.current = setTimeout(() => onClose?.(), 200);
+      return;
+    }
+
+    const c = edge.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const width = el.offsetWidth;
+    const height = el.offsetHeight;
+    // The docked rect is the painted one minus the offset we have already moved.
+    const minX = c.left - (r.left - x.get());
+    const maxX = c.right - (r.left - x.get() + width);
+    const minY = c.top - (r.top - y.get());
+    const maxY = c.bottom - (r.top - y.get() + height);
+
+    const settle = (value: typeof x, from: number, velocity: number, min: number, max: number) => {
+      // Snap to whichever edge the *projected* endpoint is nearer, so a small
+      // flick can travel a long way — but never past a bound.
+      const projected = Math.min(max, Math.max(min, project(from, velocity)));
+      const nearest = Math.abs(projected - min) <= Math.abs(projected - max) ? min : max;
+      animate(value, nearest, { ...SPRING.move, velocity });
+    };
+    settle(x, x.get(), info.velocity.x, minX, maxX);
+    settle(y, y.get(), info.velocity.y, minY, maxY);
+  };
 
   return (
     <div
@@ -110,12 +178,28 @@ export function AmbientStage({
       )}
 
 
-      {/* 2. Stage: uncropped 16:9 surface + our own controls */}
-      <div
+      {/* 2. Stage: uncropped 16:9 surface + our own controls.
+          Permanently mounted — minimise and dismiss are className-driven so the
+          <video>/<iframe> node survives navigating away. The box morphs by
+          layout projection (transform only), never by animating width/height. */}
+      {draggable && (
+        // The box the mini player may travel in. Inset by the same 20px it docks at.
+        <div ref={edgeRef} aria-hidden="true" className="pointer-events-none fixed inset-5 z-0" />
+      )}
+
+      <motion.div
         ref={stageRef}
-        className={`${isHidden ? "hidden" : ""} overflow-hidden border-border bg-black shadow-2xl transition-[width,height,border-radius,box-shadow] duration-250 ease-out ${
+        layout={!isHidden && !heroLanding}
+        drag={draggable}
+        dragMomentum={false}
+        dragElastic={0.15}
+        dragConstraints={draggable ? edgeRef : false}
+        onDragEnd={onDragEnd}
+        style={{ x, y }}
+        transition={SPRING.move}
+        className={`${isHidden ? "hidden" : ""} overflow-hidden border-border bg-black shadow-2xl ${
           isMinimized
-            ? "fixed bottom-5 left-5 z-50 w-80 max-w-[calc(100vw-2.5rem)] rounded-[var(--radius-xl)] border border-[var(--ios-separator)] shadow-2xl animate-mini-in sm:w-88"
+            ? "fixed bottom-4 left-4 z-50 w-60 max-w-[calc(100vw-2rem)] cursor-grab touch-none rounded-[var(--radius-xl)] border border-[var(--ios-separator)] sm:bottom-5 sm:left-5 sm:w-88"
             : "relative z-10 aspect-video w-full border-0 sm:rounded-[var(--radius-xl)] sm:border sm:border-[var(--ios-separator-opaque)]"
         }`}
       >
@@ -146,30 +230,38 @@ export function AmbientStage({
             />
           )}
 
-          {playbackError && !isMinimized && (
-            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/80 p-6 text-center">
-              <p className="text-callout font-medium text-white">{playbackError}</p>
-              <p className="max-w-sm text-footnote text-white/70">
-                The public playback server could not load this video. It may be busy, blocked by YouTube,
-                or temporarily offline.
-              </p>
-              <div className="flex items-center gap-2">
-                <Button type="button" size="sm" variant="secondary" onClick={onRetry} className="h-8 text-footnote">
-                  Try again
-                </Button>
-                <Button type="button" size="sm" variant="ghost" onClick={onSkip} className="h-8 text-footnote text-white hover:text-white">
-                  Skip to next
-                </Button>
-              </div>
-            </div>
-          )}
+          <AnimatePresence>
+            {playbackError && !isMinimized && (
+              <motion.div
+                className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/80 p-6 text-center"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={SPRING.ui}
+              >
+                <p className="text-callout font-medium text-white">{playbackError}</p>
+                <p className="max-w-sm text-footnote text-white/70">
+                  The public playback server could not load this video. It may be busy, blocked by YouTube,
+                  or temporarily offline.
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button type="button" size="sm" variant="secondary" onClick={onRetry} className="h-8 text-footnote">
+                    Try again
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={onSkip} className="h-8 text-footnote text-white hover:text-white">
+                    Skip to next
+                  </Button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {isMinimized ? (
             <button
               type="button"
               aria-label={isPlaying ? "Pause" : "Play"}
               onClick={onTogglePlay}
-              className="absolute inset-0 z-20 cursor-pointer"
+              className="absolute inset-0 z-20 cursor-grab active:cursor-grabbing"
             />
           ) : (
             <PlayerControls {...controls} />
@@ -199,7 +291,7 @@ export function AmbientStage({
                   {meta?.title ?? "Playing"}
                 </span>
                 <span
-                  className="truncate text-caption-2 leading-snug text-[var(--ios-label-2)]"
+                  className="hidden truncate text-caption-2 leading-snug text-[var(--ios-label-2)] sm:block"
                   style={{ letterSpacing: "var(--tracking-caption)" }}
                 >
                   {meta?.authorName ? meta.authorName : isPlaying ? "Playing" : "Paused"}
@@ -211,7 +303,7 @@ export function AmbientStage({
                   variant="ghost"
                   size="icon"
                   onClick={onPrev}
-                  className="interactive tap-compact size-8 rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-label)]"
+                  className="interactive tap-compact hidden size-8 rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-label)] sm:inline-flex"
                   title="Previous"
                 >
                   <SkipBack className="size-4" />
@@ -231,7 +323,7 @@ export function AmbientStage({
                   variant="ghost"
                   size="icon"
                   onClick={onNext}
-                  className="interactive tap-compact size-8 rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-label)]"
+                  className="interactive tap-compact hidden size-8 rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-label)] sm:inline-flex"
                   title="Next"
                 >
                   <SkipForward className="size-4" />
@@ -262,7 +354,7 @@ export function AmbientStage({
             </div>
           </div>
         )}
-      </div>
+      </motion.div>
     </div>
   );
 }

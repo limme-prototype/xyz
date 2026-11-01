@@ -11,11 +11,7 @@ interface VideoDetailsProps {
   onCopyLink: () => void;
 }
 
-/** Title, stats, actions and an expandable description.
- *  iOS HIG: Title 1 (28pt bold) for the video title.
- *  Secondary label for stats. systemBlue tint on active controls.
- *  Minimum 44pt tap targets on all buttons.
- */
+/** Video title, stats, actions and an expandable description. */
 export function VideoDetails({ meta, autoplay, onToggleAutoplay, onCopyLink }: VideoDetailsProps) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -34,20 +30,18 @@ export function VideoDetails({ meta, autoplay, onToggleAutoplay, onCopyLink }: V
   const hasDescription = Boolean(meta.description?.trim());
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <div className="flex flex-col gap-3 sm:gap-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
         <div className="min-w-0">
-          {/* iOS Title 1: 28pt Bold, tight tracking */}
           <h1
-            className="line-clamp-2 font-bold leading-[1.08]"
-            style={{ fontSize: "var(--text-title-1)", letterSpacing: "var(--tracking-title-1)" }}
+            className="line-clamp-2 text-title-3 font-bold leading-[1.12] tracking-[var(--tracking-title-3)] sm:text-title-2 sm:tracking-[var(--tracking-title-2)] lg:text-title-1 lg:tracking-[var(--tracking-title-1)]"
           >
             {meta.title || "Untitled video"}
           </h1>
           {/* iOS secondaryLabel — footnote size */}
           {stats && (
             <p
-              className="mt-1.5"
+              className="mt-1 sm:mt-1.5"
               style={{
                 fontSize: "var(--text-footnote)",
                 color: "var(--ios-label-2)",
@@ -107,32 +101,31 @@ export function VideoDetails({ meta, autoplay, onToggleAutoplay, onCopyLink }: V
         </div>
       </div>
 
-      {/* Description — iOS secondarySystemBackground fill, 10pt radius */}
       {hasDescription && (
         <div
-          className="rounded-[var(--radius-md)] px-4 py-3 glass-thin"
-          style={{ fontSize: "var(--text-callout)", lineHeight: "var(--leading-callout)" }}
+          className="rounded-[var(--radius-md)] px-3 py-2 glass-thin sm:px-4 sm:py-3"
+          style={{ fontSize: "var(--text-subhead)", lineHeight: "var(--leading-subhead)" }}
         >
-          <p
-            className={`whitespace-pre-line break-words ${expanded ? "" : "line-clamp-2"}`}
-            style={{ color: "var(--ios-label)" }}
-          >
-            {meta.description}
-          </p>
-          {/* iOS "show more" — systemBlue tint, no border */}
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="interactive mt-2 cursor-pointer"
-            style={{
-              fontSize: "var(--text-callout)",
-              fontWeight: 500,
-              color: "var(--ios-blue)",
-              minHeight: "var(--space-tap)",
-            }}
-          >
-            {expanded ? "Show less" : "Show more"}
-          </button>
+          <div className={expanded ? "" : "flex min-w-0 items-center gap-2"}>
+            <p
+              className={`whitespace-pre-line break-words ${expanded ? "" : "line-clamp-1 min-w-0 flex-1 sm:line-clamp-2"}`}
+              style={{ color: "var(--ios-label)" }}
+            >
+              {meta.description}
+            </p>
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className={`interactive cursor-pointer ${expanded ? "mt-2 min-h-[var(--space-tap)]" : "min-h-8 shrink-0 px-1"}`}
+              style={{
+                fontSize: "var(--text-footnote)",
+                fontWeight: 500,
+                color: "var(--ios-blue)",
+              }}
+            >
+              {expanded ? "Show less" : "More"}
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -349,6 +349,13 @@
      the bar edges. Sticky content offsets itself by this. */
   --nav-height: 3.75rem; /* 60px */
 
+  /* ── Motion ───────────────────────────────────────────
+     One easing curve for the whole UI, mirrored in lib/motion.ts
+     for JS-driven springs. CSS only owns non-gesture motion;
+     anything a user can touch uses the spring tokens instead. */
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-press: 100ms;
+
   /* Fonts — SF Pro is not available on web; we use
      system-ui which maps to SF Pro on Apple devices and
      Segoe UI on Windows. On Apple hardware this is 1:1. */
@@ -524,8 +531,8 @@
      .interactive gives the spring-scale active state.    */
   .interactive {
     transition:
-      transform 100ms cubic-bezier(0.22, 1, 0.36, 1),
-      opacity   100ms cubic-bezier(0.22, 1, 0.36, 1);
+      transform var(--dur-press) var(--ease-spring),
+      opacity   var(--dur-press) var(--ease-spring);
     -webkit-user-select: none;
     user-select: none;
   }
@@ -564,100 +571,51 @@
     animation: eq 0.9s ease-in-out infinite;
   }
 
-  /* ── Spring-feel animations (approximate critically-damped
-     spring: bounce=0, duration≈0.35s per Apple WWDC 2018).
-     cubic-bezier(0.22, 1, 0.36, 1) is the closest CSS
-     approximation of a spring with damping ratio 1.0.    */
+  /* ── Non-gesture entrance motion ──────────────────────
+     Anything a user can grab, interrupt, or drag uses the JS springs
+     in lib/motion.ts instead — CSS cannot be reversed mid-flight. */
 
-  /* Mini player entrance — from throw origin */
-  @keyframes miniPlayerIn {
+  /* Overlay entrance/exit — modal, scrim, toast, mini player, search
+     suggestions — is spring-driven in JS (lib/motion.ts). A @keyframes
+     animation cannot be grabbed and reversed mid-flight, which is what
+     anything the user can interrupt needs. */
+
+  /* Indeterminate loading bar — sleek progress animation for category filtering */
+  @keyframes indeterminate {
     0% {
-      opacity:   0.75;
-      transform: translate3d(20px, -32px, 0) scale(1.05);
-      box-shadow: 0 32px 64px -16px rgba(0,0,0,0.80);
+      transform: translateX(-100%);
+    }
+    50% {
+      transform: translateX(120%);
     }
     100% {
-      opacity:   1;
-      transform: translate3d(0, 0, 0) scale(1);
-      box-shadow: 0 20px 40px -12px rgba(0,0,0,0.60);
+      transform: translateX(300%);
     }
   }
-  .animate-mini-in {
-    animation: miniPlayerIn 0.38s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    will-change: transform, opacity;
-  }
-
-  /* Generic appear — fade + 4pt rise (iOS "appear" convention) */
-  @keyframes fadeIn {
-    0%   { opacity: 0; transform: translateY(4px); }
-    100% { opacity: 1; transform: translateY(0);   }
-  }
-  .animate-fadeIn {
-    animation: fadeIn 0.25s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-  }
-
-  /* Sheet slide-up — bottom sheets, action sheets */
-  @keyframes slideUp {
-    0%   { opacity: 0; transform: translateY(20px); }
-    100% { opacity: 1; transform: translateY(0);    }
-  }
-  .animate-slide-up {
-    animation: slideUp 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-  }
-
-  /* Modal materialize — blur radius and scale animate together so the
-     surface reads as glass arriving rather than a plain opacity fade.
-     End state must match .glass-thick, since the fill overrides it. */
-  @keyframes modalIn {
-    0% {
-      opacity: 0.6;
-      transform: scale(1.06);
-      -webkit-backdrop-filter: blur(0px) saturate(100%);
-      backdrop-filter: blur(0px) saturate(100%);
-    }
-    100% {
-      opacity: 1;
-      transform: scale(1);
-      -webkit-backdrop-filter: blur(24px) saturate(190%);
-      backdrop-filter: blur(24px) saturate(190%);
-    }
-  }
-  .animate-modal-in {
-    animation: modalIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    will-change: transform, opacity, backdrop-filter;
-  }
-
-  /* Scrim — dims and blurs the background as the material arrives */
-  @keyframes scrimIn {
-    from { opacity: 0; -webkit-backdrop-filter: blur(0px); backdrop-filter: blur(0px); }
-    to   { opacity: 1; -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
-  }
-  .animate-scrim-in {
-    animation: scrimIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  .animate-indeterminate {
+    animation: indeterminate 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
   }
 
   /* ═══════════════════════════════════════════════════════
      Accessibility — all 3 Apple motion/contrast signals
   ═══════════════════════════════════════════════════════ */
 
-  /* 1. Reduced motion: replace spring/slide with opacity
-        cross-fade. Keep subtle timing (not 0ms) so transitions
-        remain legible to users who experience disorientation. */
+  /* 1. Reduced motion: swap travel for a cross-fade.
+        Apple's rule is to remove *movement*, not feedback — so the
+        blanket below must not silence press response. lib/motion.ts's
+        MotionConfig(reducedMotion="user") does the same for springs. */
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration:        0.01ms !important;
       transition-duration:       0.01ms !important;
       animation-iteration-count: 1      !important;
     }
-    .animate-mini-in,
-    .animate-fadeIn,
-    .animate-slide-up {
-      animation: fadeIn 160ms ease forwards !important;
-    }
-    /* No scale/blur travel — cross-fade the material and scrim only. */
-    .animate-modal-in,
-    .animate-scrim-in {
-      animation: scrimIn 160ms ease forwards !important;
+    /* Press feedback is a comprehension aid, not decoration. It is also
+       the one thing the blanket above would wrongly kill: class specificity
+       outranks `*`, and !important on the shorthand beats the blanket's
+       duration. Opacity only — the scale is the travel. */
+    .interactive {
+      transition: opacity var(--dur-press) linear !important;
     }
     .interactive:active {
       transform: none;

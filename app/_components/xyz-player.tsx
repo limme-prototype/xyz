@@ -17,13 +17,16 @@ import { useHotkeys } from "@/lib/hooks/use-hotkeys";
 import { useHls } from "@/lib/hooks/use-hls";
 import { preloadShaka, useShaka } from "@/lib/hooks/use-shaka";
 import { preconnect } from "react-dom";
+import { AnimatePresence, MotionConfig, motion } from "motion/react";
+import { SPRING, type HeroOrigin } from "@/lib/motion";
 import { SiteHeader, type SiteHeaderHandle } from "./site-header";
 import { AmbientStage } from "./ambient-stage";
+import { HeroFlight } from "./hero-flight";
 import { VideoDetails } from "./video-details";
 import { ChipBar, HomeFeed, SearchResults, UpNextList } from "./video-list";
 import { DEFAULT_SECTION_ID } from "@/lib/content/sections";
 import { Input } from "@/components/ui/input";
-import { X, Check } from "lucide-react";
+import { X, Check, Eye, EyeOff } from "lucide-react";
 
 interface PlaybackOptionProps {
   name: string;
@@ -83,8 +86,8 @@ export const YOUTUBE_API_KEY = /^AIza[0-9A-Za-z_-]{35}$/;
 export type HomeContentMode = "default" | "youtube";
 export type HomeValidationState = "idle" | "checking" | "ready" | "error";
 
-export function getHomeContentMode(apiKey: string, validationState: HomeValidationState): HomeContentMode {
-  return validationState !== "idle" && YOUTUBE_API_KEY.test(apiKey.trim()) ? "youtube" : "default";
+export function getHomeContentMode(apiKey: string, validationState: HomeValidationState, serverConfigured = false): HomeContentMode {
+  return serverConfigured || (validationState !== "idle" && YOUTUBE_API_KEY.test(apiKey.trim())) ? "youtube" : "default";
 }
 
 /** Set from settings; sent as a header (never in the URL) so the server can use the user's own quota. */
@@ -163,14 +166,15 @@ function searchErrorMessage(code: string): string {
   }
 }
 
-async function fetchYouTubeHome(key: string): Promise<{ videos: XyzVideo[] | null; errorCode: string | null }> {
+async function fetchYouTubeHome(key?: string): Promise<{ videos: XyzVideo[] | null; errorCode: string | null; origin: string | null }> {
   try {
-    const res = await fetch("/api/xyz?feed=trending", { headers: { "x-youtube-api-key": key } });
+    const headers = key ? { "x-youtube-api-key": key } : undefined;
+    const res = await fetch("/api/xyz?feed=trending&regionCode=KH&videoCategoryId=10", { headers });
     const data = await res.json().catch(() => null);
-    if (!res.ok) return { videos: null, errorCode: typeof data?.code === "string" ? data.code : "youtube_api_error" };
-    return { videos: Array.isArray(data?.results) ? (data.results as XyzVideo[]) : null, errorCode: null };
+    if (!res.ok) return { videos: null, errorCode: typeof data?.code === "string" ? data.code : "youtube_api_error", origin: typeof data?.origin === "string" ? data.origin : null };
+    return { videos: Array.isArray(data?.results) ? (data.results as XyzVideo[]) : null, errorCode: null, origin: typeof data?.origin === "string" ? data.origin : null };
   } catch {
-    return { videos: null, errorCode: "network_error" };
+    return { videos: null, errorCode: "network_error", origin: null };
   }
 }
 
@@ -213,6 +217,9 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   const [toast, setToast] = useState<string | null>(null);
   const settingsDialogRef = useRef<HTMLDivElement | null>(null);
   const [queue, setQueue] = useState<XyzVideo[]>(XYZ_CATALOG_VIDEOS);
+  const sectionCacheRef = useRef<Map<string, { items: XyzVideo[]; nextPageToken: string | null }>>(
+    new Map([[DEFAULT_SECTION_ID, { items: XYZ_CATALOG_VIDEOS, nextPageToken: null }]])
+  );
   const [activeChip, setActiveChip] = useState<string>(DEFAULT_SECTION_ID);
   const [listLoading, setListLoading] = useState<boolean>(false);
   const [listNextPage, setListNextPage] = useState<string | null>(null);
@@ -231,15 +238,18 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
   // Native (DASH via a proxying Invidious instance) is the default: it never contacts YouTube from the browser.
-  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("native");
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("embed");
   const [dashUrls, setDashUrls] = useState<string[] | null>(null);
+  const [heroFrom, setHeroFrom] = useState<HeroOrigin>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   // Settings
-  const [tempPlaybackMode, setTempPlaybackMode] = useState<PlaybackMode>("native");
+  const [tempPlaybackMode, setTempPlaybackMode] = useState<PlaybackMode>("embed");
   const [apiKey, setApiKey] = useState<string>("");
   const [tempApiKey, setTempApiKey] = useState<string>("");
+  const [showApiKey, setShowApiKey] = useState(false);
   const [youtubeValidationState, setYoutubeValidationState] = useState<HomeValidationState>("idle");
+  const [serverYoutubeConfigured, setServerYoutubeConfigured] = useState(false);
   const [youtubeHomeVideos, setYoutubeHomeVideos] = useState<XyzVideo[]>([]);
   const [youtubeHomeError, setYoutubeHomeError] = useState<string | null>(null);
   const homeValidationRequestRef = useRef(0);
@@ -255,7 +265,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   const isAutoplayRef = useRef(isAutoplay);
   const videoActiveRef = useRef<boolean>(true);
   const streamUrlStateRef = useRef<string | null>(null);
-  const playbackModeRef = useRef<PlaybackMode>("native");
+  const playbackModeRef = useRef<PlaybackMode>("embed");
   const currentTimeRef = useRef<number>(0);
   const lastEndedTriggerRef = useRef<number>(0);
   const iframeLoadedRef = useRef<boolean>(false);
@@ -469,11 +479,12 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   }, []);
 
   const playVideoById = useCallback(
-    (id: string, known?: XyzVideo) => {
+    (id: string, known?: XyzVideo, heroOrigin?: HeroOrigin) => {
       ensureAudioContext();
       const session = startPlaybackSession(id);
       setActiveVideoId(id);
       activeVideoIdRef.current = id;
+      setHeroFrom(heroOrigin ?? null);
       setStreamUrl(null);
       setIsDismissed(false);
       setIsAutoMinimized(false);
@@ -695,6 +706,17 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
     }
   }, []);
 
+  const toggleMiniPlayer = useCallback(() => {
+    setIsDismissed(false);
+    if (isAutoMinimized) {
+      setIsAutoMinimized(false);
+      setIsMinimized(false);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    setIsMinimized((prev) => !prev);
+  }, [isAutoMinimized]);
+
   const seekRelative = useCallback(
     (offsetSeconds: number) => {
       engine.seekTo(currentTimeRef.current + offsetSeconds);
@@ -712,7 +734,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
     onPrev: playPrevVideo,
     onToggleMute: toggleMute,
     onToggleFullscreen: toggleFullscreen,
-    onToggleMini: () => setIsMinimized((prev) => !prev),
+    onToggleMini: toggleMiniPlayer,
     onOpenCommand: () => headerRef.current?.focusSearch(),
   });
 
@@ -813,7 +835,6 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
       },
       onPlay: () => {
         setIsPlaying(true);
-        setHasStarted(true);
       },
       onPause: () => setIsPlaying(false),
       onEnded: () => {
@@ -828,7 +849,10 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
       onWaiting: () => setIsBuffering(true),
       onSeeking: () => setIsBuffering(true),
       onCanPlay: () => setIsBuffering(false),
-      onPlaying: () => setIsBuffering(false),
+      onPlaying: () => {
+        setIsBuffering(false);
+        setHasStarted(true);
+      },
       onSeeked: () => setIsBuffering(false),
     }),
     [playNextVideo]
@@ -842,6 +866,9 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   const posterUrl = streamUrl
     ? null
     : meta?.thumbnailUrl || (activeVideoId ? `/api/xyz/thumb/${activeVideoId}` : null);
+
+  /** The stage is a floating mini player rather than the watch surface. */
+  const stageMinimized = !isDismissed && (isMinimized || isAutoMinimized || view.type !== "watch");
 
   const handleIframeLoad = () => {
     iframeLoadedRef.current = true;
@@ -867,21 +894,34 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   };
 
   const handleSelectChip = (sectionId: string) => {
-    if (getHomeContentMode(apiKey, youtubeValidationState) === "youtube") return;
+    const youtubeDiscovery = getHomeContentMode(apiKey, youtubeValidationState, serverYoutubeConfigured) === "youtube";
     setActiveChip(sectionId);
-    setListNextPage(null);
-    const requestId = ++listRequestRef.current;
-    if (sectionId === DEFAULT_SECTION_ID) {
+
+    if (view.type === "home" && typeof window !== "undefined" && window.scrollY > 60) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    // 1. Instant cache hit — 0ms switch without tearing down the page
+    const cached = youtubeDiscovery && sectionId !== "trending-kh" ? undefined : sectionCacheRef.current.get(sectionId);
+    if (cached) {
       setListLoading(false);
-      setQueue(XYZ_CATALOG_VIDEOS);
+      setQueue(cached.items);
+      setListNextPage(cached.nextPageToken);
       return;
     }
+
+    // 2. Fetch with gentle in-place loading (keeps current items visible)
+    setListNextPage(null);
+    const requestId = ++listRequestRef.current;
     setListLoading(true);
     void fetchSection(sectionId).then((page) => {
       if (requestId !== listRequestRef.current) return;
       setListLoading(false);
-      setQueue(page && page.items.length > 0 ? page.items : XYZ_CATALOG_VIDEOS);
-      setListNextPage(page?.nextPageToken ?? null);
+      const items = page ? page.items : youtubeDiscovery ? [] : XYZ_CATALOG_VIDEOS;
+      const nextPageToken = page?.nextPageToken ?? null;
+      sectionCacheRef.current.set(sectionId, { items, nextPageToken });
+      setQueue(items);
+      setListNextPage(nextPageToken);
     });
   };
 
@@ -894,7 +934,9 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
       if (requestId !== listRequestRef.current || !page) return;
       setQueue((prev) => {
         const seen = new Set(prev.map((v) => v.id));
-        return [...prev, ...page.items.filter((v) => !seen.has(v.id))];
+        const updated = [...prev, ...page.items.filter((v) => !seen.has(v.id))];
+        sectionCacheRef.current.set(activeChip, { items: updated, nextPageToken: page.nextPageToken });
+        return updated;
       });
       setListNextPage(page.nextPageToken);
     });
@@ -950,7 +992,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
     searchForQuery(input);
   };
 
-  const openFromSearch = (video: XyzVideo) => {
+  const openFromSearch = (video: XyzVideo, heroOrigin: HeroOrigin) => {
     if (view.type === "search") {
       setQueue(view.results);
       setActiveChip("");
@@ -961,7 +1003,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
     }
     setView({ type: "watch" });
     window.scrollTo({ top: 0 });
-    playVideoById(video.id, video);
+    playVideoById(video.id, video, heroOrigin);
   };
 
   useEffect(() => {
@@ -997,6 +1039,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   const handleOpenSettings = () => {
     setTempPlaybackMode(playbackMode);
     setTempApiKey(apiKey);
+    setShowApiKey(false);
     setShowSettings(true);
   };
 
@@ -1051,6 +1094,8 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
         }
         setYoutubeHomeError(null);
         setYoutubeHomeVideos(videos);
+        setQueue(videos);
+        sectionCacheRef.current.set("trending-kh", { items: videos, nextPageToken: null });
         setYoutubeValidationState("ready");
       })
       .catch(() => {
@@ -1061,7 +1106,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
       });
   };
 
-  // Load persisted settings after hydration (server render always assumes native mode).
+  // Load persisted settings after hydration; YouTube embed is the default playback surface.
   useEffect(() => {
     const storedMode = readSetting(PLAYBACK_MODE_KEY);
     const storedKey = readSetting(API_KEY_STORAGE);
@@ -1069,8 +1114,23 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
       if (storedMode === "embed") setPlaybackMode("embed");
       if (YOUTUBE_API_KEY.test(storedKey)) {
         setApiKey(storedKey);
+        userApiKey = storedKey;
+        setActiveChip("trending-kh");
         setYoutubeValidationState("checking");
         refreshYouTubeHome(storedKey);
+      } else {
+        void fetchYouTubeHome().then(({ videos, errorCode, origin }) => {
+          if (origin !== "youtube") return;
+          setServerYoutubeConfigured(true);
+          setYoutubeHomeVideos(videos ?? []);
+          if (videos) {
+            setQueue(videos);
+            sectionCacheRef.current.set("trending-kh", { items: videos, nextPageToken: null });
+          }
+          setActiveChip("trending-kh");
+          setYoutubeHomeError(errorCode ? youtubeHomeMessage(errorCode) : null);
+          setYoutubeValidationState(errorCode ? "error" : "ready");
+        });
       }
     }, 0);
     return () => clearTimeout(timer);
@@ -1092,6 +1152,10 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
     } catch {}
     setApiKey(key);
     userApiKey = key;
+    sectionCacheRef.current.clear();
+    sectionCacheRef.current.set(DEFAULT_SECTION_ID, { items: XYZ_CATALOG_VIDEOS, nextPageToken: null });
+    if (key) setActiveChip("trending-kh");
+    else setActiveChip(DEFAULT_SECTION_ID);
     if (!key) {
       homeValidationRequestRef.current += 1;
       setYoutubeHomeVideos([]);
@@ -1106,10 +1170,11 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
     showToast(tempPlaybackMode === "native" ? "Using built-in player" : "Using YouTube player");
   };
 
-  const homeMode = getHomeContentMode(apiKey, youtubeValidationState);
-  const homeVideos = homeMode === "youtube" ? youtubeHomeVideos : queue;
-  const homeLoading = homeMode === "youtube" ? youtubeValidationState === "checking" : listLoading;
-  const homeErrorMessage = homeMode === "youtube" ? youtubeHomeError : null;
+  const homeMode = getHomeContentMode(apiKey, youtubeValidationState, serverYoutubeConfigured);
+  const isYoutubeHomeSection = homeMode === "youtube" && activeChip === "trending-kh";
+  const homeVideos = isYoutubeHomeSection ? youtubeHomeVideos : queue;
+  const homeLoading = isYoutubeHomeSection ? youtubeValidationState === "checking" : listLoading;
+  const homeErrorMessage = isYoutubeHomeSection ? youtubeHomeError : null;
 
   const upNext = (
     <div className="flex flex-col gap-3">
@@ -1130,7 +1195,17 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
   );
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <MotionConfig reducedMotion="user">
+      <div className="flex min-h-screen flex-col bg-background text-foreground">
+      {heroFrom && posterUrl && !stageMinimized && (
+        <HeroFlight
+          from={heroFrom}
+          targetRef={stageRef}
+          src={posterUrl}
+          reveal={hasStarted}
+          onDone={() => setHeroFrom(null)}
+        />
+      )}
       <SiteHeader
         ref={headerRef}
         onSearch={handleSearch}
@@ -1151,21 +1226,21 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
       {view.type === "home" && (
         <HomeFeed
           videos={homeVideos}
-          activeChip={homeMode === "youtube" ? "trending-kh" : activeChip}
+          activeChip={activeChip}
           onSelectChip={handleSelectChip}
           loading={homeLoading}
-          hasMore={homeMode === "youtube" ? false : Boolean(listNextPage)}
-          loadingMore={homeMode === "youtube" ? false : listLoadingMore}
-          onLoadMore={homeMode === "youtube" ? undefined : loadMoreSection}
+          hasMore={isYoutubeHomeSection ? false : Boolean(listNextPage)}
+          loadingMore={isYoutubeHomeSection ? false : listLoadingMore}
+          onLoadMore={isYoutubeHomeSection ? undefined : loadMoreSection}
           activeVideoId={activeVideoId}
-          onSelectVideo={(video) => {
+          onSelectVideo={(video, heroOrigin) => {
             setView({ type: "watch" });
             window.scrollTo({ top: 0, behavior: "smooth" });
-            playVideoById(video.id, video);
+            playVideoById(video.id, video, heroOrigin);
           }}
           sourceLabel={homeMode === "youtube" ? "YouTube" : undefined}
           emptyMessage={homeErrorMessage ?? undefined}
-          emptyIsError={homeMode === "youtube" && youtubeValidationState === "error"}
+          emptyIsError={isYoutubeHomeSection && youtubeValidationState === "error"}
         />
       )}
 
@@ -1187,7 +1262,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
         className={
           view.type !== "watch"
             ? "contents"
-            : "mx-auto grid w-full max-w-[1754px] grid-cols-1 gap-x-6 gap-y-4 pb-12 sm:px-6 sm:pt-6 lg:grid-cols-[minmax(0,1fr)_400px] lg:grid-rows-[auto_1fr]"
+            : "mx-auto grid w-full max-w-[1754px] grid-cols-1 gap-x-6 gap-y-3 pb-12 sm:gap-y-4 sm:px-6 sm:pt-6 lg:grid-cols-[minmax(0,1fr)_400px] lg:grid-rows-[auto_1fr]"
         }
       >
         <div
@@ -1210,7 +1285,8 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
             onRetry={retryPlayback}
             onSkip={playNextVideo}
             onIframeLoad={handleIframeLoad}
-            isMinimized={!isDismissed && (isMinimized || isAutoMinimized || view.type !== "watch")}
+            isMinimized={stageMinimized}
+            heroLanding={heroFrom !== null}
             isHidden={isDismissed || (view.type !== "watch" && !hasStarted && !isPlaying)}
             viewType={view.type}
             onToggleMinimize={() => {
@@ -1258,7 +1334,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
               onRate: changeRate,
               onToggleCaptions: toggleCaptions,
               onToggleFullscreen: toggleFullscreen,
-              onToggleMini: () => setIsMinimized((prev) => !prev),
+              onToggleMini: toggleMiniPlayer,
               onNext: playNextVideo,
               onPrev: playPrevVideo,
               qualities: streamUrl ? [] : shaka.qualities.map((q) => q.height),
@@ -1285,7 +1361,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
               aria-label="Up next"
               className="px-4 sm:px-0 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start"
             >
-              <h2 className="mb-2 font-display text-lg font-semibold">Up next</h2>
+              <h2 className="mb-1.5 font-display text-lg font-semibold sm:mb-2">Up next</h2>
               {upNext}
             </aside>
 
@@ -1293,107 +1369,138 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
         )}
       </main>
 
-      {/* Settings Dialog — iOS prominent-modal material (.glass-thick) */}
-      {showSettings && (
-        <div
-          className="animate-scrim-in fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-[var(--space-4)]"
-          onClick={() => setShowSettings(false)}
-        >
-          <div
-            ref={settingsDialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="settings-title"
-            className="glass-thick animate-modal-in w-full max-w-sm rounded-[var(--radius-xl)] p-[var(--space-5)] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.7)]"
-            onClick={(e) => e.stopPropagation()}
+      {/* Settings Dialog — iOS prominent-modal material (.glass-thick).
+          Enters and leaves along the same path: the panel materialises out of
+          the scrim and sinks back into it, rather than popping out of existence. */}
+      <AnimatePresence>
+        {showSettings && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-[var(--space-4)]"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={SPRING.ui}
+            onClick={() => setShowSettings(false)}
           >
-            <div className="flex items-center justify-between pb-[var(--space-3)]">
-              <h3
-                id="settings-title"
-                className="text-headline font-semibold tracking-[var(--tracking-headline)]"
-              >
-                Settings
-              </h3>
-              <button
-                type="button"
-                className="interactive tap-compact flex size-9 items-center justify-center rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-3)] hover:text-[var(--ios-label)] cursor-pointer"
-                onClick={() => setShowSettings(false)}
-                aria-label="Close settings"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-
-            <form onSubmit={saveSettings} className="flex flex-col gap-[var(--space-4)] pt-[var(--space-2)]">
-              <fieldset className="flex flex-col gap-[var(--space-2)]">
-                <legend className="pb-[var(--space-1)] text-footnote font-semibold uppercase tracking-[0.02em] text-[var(--ios-label-2)]">
-                  Playback
-                </legend>
-                <PlaybackOption
-                  name="playback-mode"
-                  value="native"
-                  checked={tempPlaybackMode === "native"}
-                  onChange={() => setTempPlaybackMode("native")}
-                  title="Built-in player"
-                  detail="Works where YouTube is blocked."
-                />
-                <PlaybackOption
-                  name="playback-mode"
-                  value="embed"
-                  checked={tempPlaybackMode === "embed"}
-                  onChange={() => setTempPlaybackMode("embed")}
-                  title="YouTube player"
-                  detail="Needs access to YouTube."
-                />
-              </fieldset>
-
-              <fieldset className="flex flex-col gap-[var(--space-2)]">
-                <legend className="pb-[var(--space-1)] text-footnote font-semibold uppercase tracking-[0.02em] text-[var(--ios-label-2)]">
-                  Discovery
-                </legend>
-                <label htmlFor="api-key-input" className="text-callout font-medium tracking-[var(--tracking-callout)]">
-                  YouTube API key <span className="font-normal text-[var(--ios-label-2)]">(optional)</span>
-                </label>
-                <Input
-                  id="api-key-input"
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder="AIza..."
-                  value={tempApiKey}
-                  onChange={(e) => setTempApiKey(e.target.value)}
-                  className="bg-[var(--ios-fill-3)] font-mono text-callout backdrop-blur-sm"
-                />
-                <p className="text-footnote tracking-[var(--tracking-footnote)] text-[var(--ios-label-2)]">
-                  Powers discovery, search, and video details in either playback mode.
-                </p>
-              </fieldset>
-
-              <div className="flex items-center justify-end gap-[var(--space-2)] pt-[var(--space-1)]">
+            <motion.div
+              ref={settingsDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="settings-title"
+              className="glass-thick w-full max-w-sm rounded-[var(--radius-xl)] p-[var(--space-5)] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.7)]"
+              initial={{ opacity: 0.6, scale: 1.06 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0.6, scale: 1.06 }}
+              transition={SPRING.sheet}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between pb-[var(--space-3)]">
+                <h3
+                  id="settings-title"
+                  className="text-headline font-semibold tracking-[var(--tracking-headline)]"
+                >
+                  Settings
+                </h3>
                 <button
                   type="button"
-                  className="interactive flex h-[var(--space-tap)] items-center justify-center rounded-[var(--radius-md)] px-[var(--space-4)] text-body font-medium tracking-[var(--tracking-body)] text-[var(--ios-blue)] cursor-pointer"
+                  className="interactive tap-compact flex size-9 items-center justify-center rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-3)] hover:text-[var(--ios-label)] cursor-pointer"
                   onClick={() => setShowSettings(false)}
+                  aria-label="Close settings"
                 >
-                  Cancel
-                </button>
-                <button type="submit" className="btn-primary interactive cursor-pointer">
-                  Save
+                  <X className="size-4" />
                 </button>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
 
-      {toast && (
-        <div
-          role="status"
-          className="glass-regular animate-slide-up fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-[var(--radius-lg)] px-[var(--space-4)] py-[var(--space-2)] text-callout tracking-[var(--tracking-callout)] shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)]"
-        >
-          {toast}
-        </div>
-      )}
-    </div>
+              <form onSubmit={saveSettings} className="flex flex-col gap-[var(--space-4)] pt-[var(--space-2)]">
+                <fieldset className="flex flex-col gap-[var(--space-2)]">
+                  <legend className="pb-[var(--space-1)] text-footnote font-semibold uppercase tracking-[0.02em] text-[var(--ios-label-2)]">
+                    Playback
+                  </legend>
+                  <PlaybackOption
+                    name="playback-mode"
+                    value="native"
+                    checked={tempPlaybackMode === "native"}
+                    onChange={() => setTempPlaybackMode("native")}
+                    title="Built-in player"
+                    detail="Works where YouTube is blocked."
+                  />
+                  <PlaybackOption
+                    name="playback-mode"
+                    value="embed"
+                    checked={tempPlaybackMode === "embed"}
+                    onChange={() => setTempPlaybackMode("embed")}
+                    title="YouTube player"
+                    detail="Needs access to YouTube."
+                  />
+                </fieldset>
+
+                <fieldset className="flex flex-col gap-[var(--space-2)]">
+                  <legend className="pb-[var(--space-1)] text-footnote font-semibold uppercase tracking-[0.02em] text-[var(--ios-label-2)]">
+                    Discovery
+                  </legend>
+                  <label htmlFor="api-key-input" className="text-callout font-medium tracking-[var(--tracking-callout)]">
+                    YouTube API key <span className="font-normal text-[var(--ios-label-2)]">(optional)</span>
+                  </label>
+                  <div className="relative">
+                    <Input
+                      id="api-key-input"
+                      type={showApiKey ? "text" : "password"}
+                      autoComplete="new-password"
+                      spellCheck={false}
+                      placeholder="AIza..."
+                      value={tempApiKey}
+                      onChange={(e) => setTempApiKey(e.target.value)}
+                      className="bg-[var(--ios-fill-3)] pr-12 font-mono text-callout backdrop-blur-sm"
+                    />
+                    <button
+                      type="button"
+                      aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                      aria-pressed={showApiKey}
+                      onClick={() => setShowApiKey((visible) => !visible)}
+                      className="interactive tap-compact absolute inset-y-0 right-1 flex w-10 items-center justify-center rounded-full text-[var(--ios-label-2)] hover:text-[var(--ios-label)] cursor-pointer"
+                    >
+                      {showApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  <p className="text-footnote tracking-[var(--tracking-footnote)] text-[var(--ios-label-2)]">
+                    Powers discovery, search, and video details in either playback mode.
+                  </p>
+                </fieldset>
+
+                <div className="flex items-center justify-end gap-[var(--space-2)] pt-[var(--space-1)]">
+                  <button
+                    type="button"
+                    className="interactive flex h-[var(--space-tap)] items-center justify-center rounded-[var(--radius-md)] px-[var(--space-4)] text-body font-medium tracking-[var(--tracking-body)] text-[var(--ios-blue)] cursor-pointer"
+                    onClick={() => setShowSettings(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn-primary interactive cursor-pointer">
+                    Save
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            key="toast"
+            role="status"
+            className="glass-regular fixed bottom-6 left-1/2 z-50 rounded-[var(--radius-lg)] px-[var(--space-4)] py-[var(--space-2)] text-callout tracking-[var(--tracking-callout)] shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)]"
+            initial={{ opacity: 0, x: "-50%", y: 20 }}
+            animate={{ opacity: 1, x: "-50%", y: 0 }}
+            exit={{ opacity: 0, x: "-50%", y: 20 }}
+            transition={SPRING.ui}
+          >
+            {toast}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      </div>
+    </MotionConfig>
   );
 }

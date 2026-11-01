@@ -179,7 +179,9 @@ export async function GET(request: NextRequest) {
   if (feed === "trending") {
     if (apiKey) {
       try {
-        const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&chart=mostPopular&maxResults=20&key=${apiKey}`;
+        const regionCode = /^[A-Z]{2}$/.test(searchParams.get("regionCode") ?? "") ? searchParams.get("regionCode")! : "KH";
+        const categoryId = /^\d{1,3}$/.test(searchParams.get("videoCategoryId") ?? "") ? searchParams.get("videoCategoryId")! : "10";
+        const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&chart=mostPopular&regionCode=${regionCode}&videoCategoryId=${categoryId}&maxResults=20&key=${apiKey}`;
         const res = await fetch(url, {
           headers: SERVER_FETCH_HEADERS,
           signal: AbortSignal.timeout(4500),
@@ -205,30 +207,30 @@ export async function GET(request: NextRequest) {
             { headers: responseHeaders }
           );
         }
-        if (userApiKey) {
+        if (apiKey) {
           const data = await res.json().catch(() => null);
-          const errorText = JSON.stringify(data?.error ?? "");
-          if (/quotaExceeded|dailyLimitExceeded/i.test(errorText)) {
+          const failure = youtubeApiFailure(data);
+          if (failure.code === "quota_exceeded") {
             return NextResponse.json(
-              { error: "YouTube API quota exceeded", code: "quota_exceeded" },
+              { error: "YouTube API quota exceeded", code: "quota_exceeded", origin: "youtube" },
               { status: 429, headers: responseHeaders }
             );
           }
-          if (/keyInvalid|API key not valid|API_KEY_INVALID/i.test(errorText)) {
+          if (failure.code === "invalid_api_key") {
             return NextResponse.json(
-              { error: "YouTube rejected this API key", code: "invalid_api_key" },
+              { error: "YouTube rejected this API key", code: "invalid_api_key", origin: "youtube" },
               { status: 401, headers: responseHeaders }
             );
           }
           return NextResponse.json(
-            { error: "YouTube discovery failed", code: "youtube_api_error" },
+            { error: "YouTube discovery failed", code: "youtube_api_error", origin: "youtube" },
             { status: 502, headers: responseHeaders }
           );
         }
       } catch {
-        if (userApiKey) {
+        if (apiKey) {
           return NextResponse.json(
-            { error: "YouTube discovery is temporarily unavailable", code: "network_error" },
+            { error: "YouTube discovery is temporarily unavailable", code: "network_error", origin: "youtube" },
             { status: 502, headers: responseHeaders }
           );
         }
@@ -304,7 +306,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // 4. Universal Search. Without a personal key, Invidious goes first: YouTube Data API search.list
+  // 4. Search. Without a configured key, Invidious goes first: YouTube Data API search.list
   // is capped at 100 calls/day per project on the shared server key. With the user's own key, YouTube goes first.
   if (query) {
     const invidiousSearch = async () => {
@@ -324,7 +326,7 @@ export async function GET(request: NextRequest) {
         : null;
     };
 
-    if (!userApiKey) {
+    if (!apiKey) {
       const fromInvidious = await invidiousSearch();
       if (fromInvidious) return fromInvidious;
     }
@@ -338,7 +340,7 @@ export async function GET(request: NextRequest) {
           headers: SERVER_FETCH_HEADERS,
           signal: AbortSignal.timeout(5000),
         });
-        if (!apiRes.ok && userApiKey) {
+        if (!apiRes.ok) {
           const failure = youtubeApiFailure(await apiRes.json().catch(() => null));
           return NextResponse.json(
             { error: failure.message, code: failure.code },
@@ -407,7 +409,7 @@ export async function GET(request: NextRequest) {
           );
         }
       } catch {
-        if (userApiKey) {
+        if (apiKey) {
           return NextResponse.json(
             { error: "YouTube discovery is temporarily unavailable", code: "network_error" },
             { status: 502, headers: responseHeaders }
@@ -417,7 +419,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    if (userApiKey) {
+    if (apiKey) {
       const fromInvidious = await invidiousSearch();
       if (fromInvidious) return fromInvidious;
     }
@@ -535,6 +537,15 @@ export async function GET(request: NextRequest) {
     } catch {
       // continue to next fallback
     }
+  }
+
+  // A configured key opts this request into YouTube-only metadata. Do not silently replace it
+  // with stale catalog data or a third-party mirror when YouTube cannot return the details.
+  if (apiKey) {
+    return NextResponse.json(
+      { error: "YouTube video details are temporarily unavailable", code: "youtube_api_error", origin: "youtube" },
+      { status: 502, headers: responseHeaders }
+    );
   }
 
   // 3. Try Invidious provider bases

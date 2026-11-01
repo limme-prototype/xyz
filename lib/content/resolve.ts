@@ -8,6 +8,7 @@ import {
   channelUploads,
   mostPopular,
   videosById,
+  searchVideos,
   type DataApiVideo,
 } from "@/lib/providers/youtube-data";
 import type { Section, SectionSource } from "./sections";
@@ -40,6 +41,13 @@ function cleanDescription(text: string): string {
   return stripBlockedUrls(text).replace(/\s+\n/g, "\n").trim().slice(0, DESCRIPTION_MAX);
 }
 
+function matchesTerms(text: string, terms: string[]): boolean {
+  return terms.some((term) => {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`\\b${escaped}\\b`, "i").test(text);
+  });
+}
+
 function fromRss(v: RssVideo, now: number, details?: DataApiVideo): XyzVideo {
   return {
     ...baseVideo(v.id),
@@ -64,15 +72,28 @@ function fromDataApi(v: DataApiVideo, now: number): XyzVideo {
   };
 }
 
+function fromSeed() {
+  return {
+    items: XYZ_CATALOG_VIDEOS.map((video) => ({
+      ...video,
+      channelUrl: "",
+      description: cleanDescription(video.description),
+    })),
+    origin: "seed" as const,
+    nextPageToken: null,
+  };
+}
+
 function isShortVideo(v: DataApiVideo): boolean {
   return !v.liveNow && v.durationSeconds !== null && v.durationSeconds > 0 && v.durationSeconds < SHORT_MAX_SECONDS;
 }
 
-async function fromChannels(channelIds: string[], { apiKey, now = Date.now() }: Options) {
+async function fromChannels(channelIds: string[], { apiKey, now = Date.now() }: Options, matchTerms?: string[]) {
   const feeds = await Promise.all(channelIds.map(fetchChannelFeed));
   const seen = new Set<string>();
   const entries = feeds
     .flat()
+    .filter((video) => !matchTerms?.length || matchesTerms(video.title, matchTerms))
     .filter((v) => !v.isShort && !seen.has(v.id) && seen.add(v.id))
     .sort((a, b) => Date.parse(b.published) - Date.parse(a.published));
 
@@ -126,7 +147,15 @@ async function fromChart(regionCode: string, categoryId: string | undefined, { a
   }
 }
 
-async function fromSearch(query: string) {
+async function fromSearch(query: string, options: Options & { order?: "relevance" | "date" | "viewCount"; regionCode?: string; pageToken?: string }) {
+  if (options.apiKey) {
+    const result = await searchVideos(query, options.apiKey, options);
+    return {
+      items: result.videos.filter((video) => !isShortVideo(video)).map((video) => fromDataApi(video, options.now ?? Date.now())),
+      origin: "youtube" as const,
+      nextPageToken: result.nextPageToken,
+    };
+  }
   const result = await fetchInvidiousJson<InvidiousVideoItem[]>(`/api/v1/search?q=${encodeURIComponent(query)}`, {
     accept: (d) => Array.isArray(d) && d.length > 0,
   });
@@ -140,15 +169,16 @@ async function fromSearch(query: string) {
 async function fromSource(source: SectionSource, options: Options) {
   switch (source.kind) {
     case "seed":
-      return { items: XYZ_CATALOG_VIDEOS, origin: "seed" as const, nextPageToken: null };
+      if (options.apiKey) return fromChart("KH", undefined, options);
+      return fromSeed();
     case "channels":
-      return fromChannels(source.channelIds, options);
+      return fromChannels(source.channelIds, options, source.matchTerms);
     case "uploads":
       return fromUploads(source.channelId, options);
     case "chart":
       return fromChart(source.regionCode, source.categoryId, options);
     case "search":
-      return fromSearch(source.query);
+      return fromSearch(source.query, { ...options, order: source.order, regionCode: source.regionCode });
   }
 }
 
@@ -158,7 +188,9 @@ async function fromSource(source: SectionSource, options: Options) {
  */
 export async function resolveSection(section: Section, options: Options = {}): Promise<SectionResult> {
   const attempts: SectionSource[] = [section.source];
-  if (section.fallback && !options.pageToken) attempts.push(section.fallback);
+  if (section.fallback && !options.pageToken) {
+    attempts.push(...(Array.isArray(section.fallback) ? section.fallback : [section.fallback]));
+  }
 
   for (const source of attempts) {
     try {
@@ -170,11 +202,19 @@ export async function resolveSection(section: Section, options: Options = {}): P
       // try the next source
     }
   }
+  if (options.apiKey) {
+    return { id: section.id, label: section.label, items: [], origin: "youtube", nextPageToken: null };
+  }
+  // A global seed is useful for the unfiltered home page, but it is misleading in a topic tab:
+  // Khmer starter videos are not valid results for Security, Cloud & Deployment, etc.
+  if (section.source.kind === "search") {
+    return { id: section.id, label: section.label, items: [], origin: "invidious", nextPageToken: null };
+  }
   return {
     id: section.id,
     label: section.label,
-    items: options.pageToken ? [] : XYZ_CATALOG_VIDEOS,
-    origin: "seed",
+    items: [],
+    origin: section.source.kind === "seed" ? "seed" : section.source.kind === "channels" ? "rss" : "invidious",
     nextPageToken: null,
   };
 }

@@ -6,8 +6,8 @@ import { resolveSection } from "@/lib/content/resolve";
 const PAGE_TOKEN = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
- * One list for the "Up next" tabs. Lists are identical for every visitor, so the CDN serves a
- * cached copy and refreshes it in the background (RSS and Data API are hit at most ~hourly).
+ * One list for the "Up next" tabs. Shared deployment-key responses can use CDN caching;
+ * per-user API key results stay private and are cached only in that user's browser.
  */
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -30,11 +30,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     headers: {
       // A seed fallback means the live sources failed: retry sooner.
       // Later pages vary by `pageToken` (a query parameter), which not every CDN keys on: browser only.
-      "Cache-Control": pageToken
-        ? "private, max-age=300"
-        : result.origin === "seed" && section.source.kind !== "seed"
-          ? "public, s-maxage=300, stale-while-revalidate=3600"
-          : "public, s-maxage=3600, stale-while-revalidate=86400",
+      "Cache-Control":
+        requestKey && /^AIza[0-9A-Za-z_-]{35}$/.test(requestKey)
+          ? "private, max-age=300"
+          : pageToken
+            ? "private, max-age=300"
+            : result.items.length === 0
+              ? "public, max-age=60, s-maxage=60"
+            : result.origin === "seed" && section.source.kind !== "seed"
+              ? "public, s-maxage=300, stale-while-revalidate=3600"
+              : "public, s-maxage=3600, stale-while-revalidate=86400",
       "X-Content-Type-Options": "nosniff",
     },
   });
