@@ -74,7 +74,7 @@ function IconButton({
       aria-label={label}
       title={label}
       onClick={onClick}
-      className="flex size-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 cursor-pointer"
+      className="tap-compact flex size-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 cursor-pointer"
     >
       {children}
     </button>
@@ -183,7 +183,7 @@ export function PlayerControls(props: PlayerControlsProps) {
           <span
             role="status"
             aria-label="Loading video"
-            className="h-14 w-14 animate-spin rounded-full border-4 border-white/20 border-t-brand bg-black/40 shadow-[0_0_0_10px_rgba(0,0,0,0.35)]"
+            className="h-14 w-14 animate-spin rounded-full border-4 border-white/20 border-t-[var(--ios-blue)] bg-black/40 shadow-[0_0_0_10px_rgba(0,0,0,0.35)]"
           />
         ) : !isPlaying && (!hasStarted || concealPaused) ? (
           <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white/95 text-black shadow-xl">
@@ -206,7 +206,7 @@ export function PlayerControls(props: PlayerControlsProps) {
         {/* Seek bar */}
         <div className="group/seek relative mb-1.5 flex h-4 items-center">
           <div className="relative h-1 w-full overflow-hidden rounded-full bg-white/20 transition-all group-hover/seek:h-1.5">
-            <div className="absolute inset-y-0 left-0 bg-brand" style={{ width: `${progress}%` }} />
+            <div className="absolute inset-y-0 left-0 bg-[var(--ios-blue)]" style={{ width: `${progress}%` }} />
           </div>
           <input
             type="range"
@@ -232,7 +232,7 @@ export function PlayerControls(props: PlayerControlsProps) {
               aria-label={isPlaying ? "Pause (Space)" : "Play (Space)"}
               title={isPlaying ? "Pause (Space)" : "Play (Space)"}
               onClick={onTogglePlay}
-              className="mx-1 flex size-9 items-center justify-center rounded-full bg-white text-black shadow-sm transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand cursor-pointer"
+              className="interactive tap-compact mx-1 flex size-9 items-center justify-center rounded-full bg-white text-black shadow-sm transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand cursor-pointer"
             >
               {isPlaying ? (
                 <Pause className="size-4 fill-current" />

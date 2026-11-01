@@ -22,9 +22,42 @@ import { AmbientStage } from "./ambient-stage";
 import { VideoDetails } from "./video-details";
 import { ChipBar, HomeFeed, SearchResults, UpNextList } from "./video-list";
 import { DEFAULT_SECTION_ID } from "@/lib/content/sections";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { X } from "lucide-react";
+import { X, Check } from "lucide-react";
+
+interface PlaybackOptionProps {
+  name: string;
+  value: string;
+  checked: boolean;
+  onChange: () => void;
+  title: string;
+  detail: string;
+}
+
+/** iOS form cell: whole row is the tap target, radio is the indicator. */
+function PlaybackOption({ name, value, checked, onChange, title, detail }: PlaybackOptionProps) {
+  return (
+    <label className="interactive flex cursor-pointer items-start gap-[var(--space-3)] rounded-[var(--radius-md)] border border-[var(--ios-separator)] p-[var(--space-3)] transition-colors hover:bg-[var(--ios-fill-4)] has-[:checked]:border-[var(--ios-blue)] has-[:checked]:bg-[rgba(10,132,255,0.10)]">
+      <input
+        type="radio"
+        name={name}
+        value={value}
+        checked={checked}
+        onChange={onChange}
+        className="peer sr-only"
+      />
+      <span className="mt-0.5 flex size-[1.3125rem] shrink-0 items-center justify-center rounded-full border-[1.5px] border-[var(--ios-separator-opaque)] bg-[var(--ios-fill-3)] transition-colors peer-checked:border-[var(--ios-blue)] peer-checked:bg-[var(--ios-blue)] peer-checked:[&>svg]:opacity-100 peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--ios-blue)]/60">
+        <Check className="size-3 text-white opacity-0 transition-opacity" strokeWidth={3} />
+      </span>
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-body leading-tight tracking-[var(--tracking-body)]">{title}</span>
+        <span className="text-footnote leading-snug tracking-[var(--tracking-footnote)] text-[var(--ios-label-2)]">
+          {detail}
+        </span>
+      </span>
+    </label>
+  );
+}
 
 function getFallbackMeta(id: string): VideoMeta | null {
   const found = XYZ_CATALOG_VIDEOS.find((v) => v.id === id);
@@ -1198,6 +1231,14 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
               setIsDismissed(true);
               setIsAutoMinimized(false);
               setIsMinimized(false);
+              if (view.type === "watch") {
+                setView({ type: "home" });
+                if (typeof window !== "undefined") {
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete("v");
+                  window.history.pushState({}, "", url.pathname + url.search);
+                }
+              }
             }}
             controls={{
               isPlaying,
@@ -1252,10 +1293,10 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
         )}
       </main>
 
-      {/* Settings Dialog */}
+      {/* Settings Dialog — iOS prominent-modal material (.glass-thick) */}
       {showSettings && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          className="animate-scrim-in fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-[var(--space-4)]"
           onClick={() => setShowSettings(false)}
         >
           <div
@@ -1263,14 +1304,19 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
             role="dialog"
             aria-modal="true"
             aria-labelledby="settings-title"
-            className="w-full max-w-sm rounded-xl border border-border bg-popover p-5 shadow-2xl"
+            className="glass-thick animate-modal-in w-full max-w-sm rounded-[var(--radius-xl)] p-[var(--space-5)] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.7)]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between pb-3">
-              <h3 id="settings-title" className="text-base font-medium">Settings</h3>
+            <div className="flex items-center justify-between pb-[var(--space-3)]">
+              <h3
+                id="settings-title"
+                className="text-headline font-semibold tracking-[var(--tracking-headline)]"
+              >
+                Settings
+              </h3>
               <button
                 type="button"
-                className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer"
+                className="interactive tap-compact flex size-9 items-center justify-center rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-3)] hover:text-[var(--ios-label)] cursor-pointer"
                 onClick={() => setShowSettings(false)}
                 aria-label="Close settings"
               >
@@ -1278,40 +1324,32 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
               </button>
             </div>
 
-            <form onSubmit={saveSettings} className="flex flex-col gap-4 pt-2">
-              <fieldset className="flex flex-col gap-2">
-                <legend className="mb-1 text-sm font-medium">Playback</legend>
-                <label className="flex items-start gap-2 text-sm cursor-pointer">
-                  <input
-                    type="radio"
-                    name="playback-mode"
-                    className="mt-1"
-                    checked={tempPlaybackMode === "native"}
-                    onChange={() => setTempPlaybackMode("native")}
-                  />
-                  <span>
-                    Built-in player
-                    <span className="block text-xs text-muted-foreground">Works where YouTube is blocked.</span>
-                  </span>
-                </label>
-                <label className="flex items-start gap-2 text-sm cursor-pointer">
-                  <input
-                    type="radio"
-                    name="playback-mode"
-                    className="mt-1"
-                    checked={tempPlaybackMode === "embed"}
-                    onChange={() => setTempPlaybackMode("embed")}
-                  />
-                  <span>
-                    YouTube player
-                    <span className="block text-xs text-muted-foreground">Needs access to YouTube.</span>
-                  </span>
-                </label>
+            <form onSubmit={saveSettings} className="flex flex-col gap-[var(--space-4)] pt-[var(--space-2)]">
+              <fieldset className="flex flex-col gap-[var(--space-2)]">
+                <legend className="pb-[var(--space-1)] text-footnote font-semibold uppercase tracking-[0.02em] text-[var(--ios-label-2)]">
+                  Playback
+                </legend>
+                <PlaybackOption
+                  name="playback-mode"
+                  value="native"
+                  checked={tempPlaybackMode === "native"}
+                  onChange={() => setTempPlaybackMode("native")}
+                  title="Built-in player"
+                  detail="Works where YouTube is blocked."
+                />
+                <PlaybackOption
+                  name="playback-mode"
+                  value="embed"
+                  checked={tempPlaybackMode === "embed"}
+                  onChange={() => setTempPlaybackMode("embed")}
+                  title="YouTube player"
+                  detail="Needs access to YouTube."
+                />
               </fieldset>
 
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="api-key-input" className="text-sm font-medium">
-                  YouTube API key <span className="font-normal text-muted-foreground">(optional)</span>
+              <div className="flex flex-col gap-[var(--space-2)]">
+                <label htmlFor="api-key-input" className="text-callout font-medium tracking-[var(--tracking-callout)]">
+                  YouTube API key <span className="font-normal text-[var(--ios-label-2)]">(optional)</span>
                 </label>
                 <Input
                   id="api-key-input"
@@ -1321,18 +1359,24 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
                   placeholder="AIza..."
                   value={tempApiKey}
                   onChange={(e) => setTempApiKey(e.target.value)}
-                  className="h-9 font-mono text-sm"
+                  className="bg-[var(--ios-fill-3)] font-mono text-callout backdrop-blur-sm"
                 />
-                <p className="text-xs text-muted-foreground">Used for home discovery, search, and video details.</p>
+                <p className="text-footnote tracking-[var(--tracking-footnote)] text-[var(--ios-label-2)]">
+                  Used for home discovery, search, and video details.
+                </p>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <Button type="button" variant="ghost" size="sm" className="rounded-[10px]" onClick={() => setShowSettings(false)}>
+              <div className="flex items-center justify-end gap-[var(--space-2)] pt-[var(--space-1)]">
+                <button
+                  type="button"
+                  className="interactive flex h-[var(--space-tap)] items-center justify-center rounded-[var(--radius-md)] px-[var(--space-4)] text-body font-medium tracking-[var(--tracking-body)] text-[var(--ios-blue)] cursor-pointer"
+                  onClick={() => setShowSettings(false)}
+                >
                   Cancel
-                </Button>
-                <Button type="submit" size="sm" className="rounded-[10px]">
+                </button>
+                <button type="submit" className="btn-primary interactive cursor-pointer">
                   Save
-                </Button>
+                </button>
               </div>
             </form>
           </div>
@@ -1342,7 +1386,7 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
       {toast && (
         <div
           role="status"
-          className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-border bg-popover px-4 py-2.5 text-sm shadow-2xl"
+          className="glass-regular animate-slide-up fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-[var(--radius-lg)] px-[var(--space-4)] py-[var(--space-2)] text-callout tracking-[var(--tracking-callout)] shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)]"
         >
           {toast}
         </div>

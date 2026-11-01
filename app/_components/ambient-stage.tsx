@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { VideoMeta } from "@/lib/types/player";
 import { Button } from "@/components/ui/button";
 import { SkipBack, SkipForward, Play, Pause, Maximize2, X } from "lucide-react";
@@ -63,6 +64,25 @@ export function AmbientStage({
 }: AmbientStageProps) {
   const { posterUrl, isPlaying, currentTime, duration, onTogglePlay, onNext, onPrev } = controls;
 
+  /* The minimized stage is position:fixed, so it cannot push content aside on
+     its own. Publish its height and let the feeds reserve the space. */
+  useEffect(() => {
+    const el = stageRef.current;
+    const root = document.documentElement;
+    if (!isMinimized || !el || isHidden) {
+      root.style.removeProperty("--mini-clear");
+      return;
+    }
+    const publish = () => root.style.setProperty("--mini-clear", `${el.getBoundingClientRect().height}px`);
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--mini-clear");
+    };
+  }, [isMinimized, isHidden, stageRef]);
+
   return (
     <div
       className={
@@ -73,13 +93,13 @@ export function AmbientStage({
     >
       {/* 0. Watch stage backdrop / placeholder when docked to mini player */}
       {viewType === "watch" && isMinimized && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center rounded-xl border border-dashed border-border/50 bg-card/40 text-muted-foreground p-6 text-center select-none backdrop-blur-xs">
-          <p className="text-sm font-medium text-foreground/80">Playing in mini player</p>
-          <p className="text-xs text-muted-foreground mt-1">Click the expand button in the corner to restore</p>
+        <div className="absolute inset-0 flex flex-col items-center justify-center rounded-[var(--radius-xl)] border border-dashed border-[var(--ios-separator)] glass-thin text-[var(--ios-label-2)] p-6 text-center select-none">
+          <p className="text-callout font-medium text-[var(--ios-label-2)]">Playing in mini player</p>
+          <p className="text-footnote text-[var(--ios-label-2)] mt-1">Click the expand button in the corner to restore</p>
         </div>
       )}
-      {/* 1. Subtle ambient glow */}
-      {posterUrl && !isMinimized && (
+      {/* 1. Subtle ambient glow (watch view only) */}
+      {posterUrl && !isMinimized && !isHidden && viewType === "watch" && (
         <div
           aria-hidden="true"
           className="pointer-events-none absolute -inset-6 z-0 hidden overflow-hidden rounded-2xl opacity-20 blur-3xl sm:block transition-opacity duration-700"
@@ -95,8 +115,8 @@ export function AmbientStage({
         ref={stageRef}
         className={`${isHidden ? "hidden" : ""} overflow-hidden border-border bg-black shadow-2xl transition-[width,height,border-radius,box-shadow] duration-250 ease-out ${
           isMinimized
-            ? "fixed bottom-5 left-5 z-50 w-80 max-w-[calc(100vw-2.5rem)] rounded-xl border border-border/80 shadow-2xl backdrop-blur animate-mini-in sm:w-88"
-            : "relative z-10 aspect-video w-full border-0 sm:rounded-xl sm:border"
+            ? "fixed bottom-5 left-5 z-50 w-80 max-w-[calc(100vw-2.5rem)] rounded-[var(--radius-xl)] border border-[var(--ios-separator)] shadow-2xl animate-mini-in sm:w-88"
+            : "relative z-10 aspect-video w-full border-0 sm:rounded-[var(--radius-xl)] sm:border sm:border-[var(--ios-separator-opaque)]"
         }`}
       >
         <div className={`relative w-full bg-black ${isMinimized ? "aspect-video" : "h-full"}`}>
@@ -128,16 +148,16 @@ export function AmbientStage({
 
           {playbackError && !isMinimized && (
             <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/80 p-6 text-center">
-              <p className="text-sm font-medium text-white">{playbackError}</p>
-              <p className="max-w-sm text-xs text-white/60">
+              <p className="text-callout font-medium text-white">{playbackError}</p>
+              <p className="max-w-sm text-footnote text-white/70">
                 The public playback server could not load this video. It may be busy, blocked by YouTube,
                 or temporarily offline.
               </p>
               <div className="flex items-center gap-2">
-                <Button type="button" size="sm" variant="secondary" onClick={onRetry} className="h-8 text-xs">
+                <Button type="button" size="sm" variant="secondary" onClick={onRetry} className="h-8 text-footnote">
                   Try again
                 </Button>
-                <Button type="button" size="sm" variant="ghost" onClick={onSkip} className="h-8 text-xs text-white hover:text-white">
+                <Button type="button" size="sm" variant="ghost" onClick={onSkip} className="h-8 text-footnote text-white hover:text-white">
                   Skip to next
                 </Button>
               </div>
@@ -156,25 +176,32 @@ export function AmbientStage({
           )}
         </div>
 
-        {/* 3. Minimized YouTube-style bottom bar widget */}
+        {/* 3. Minimized iOS-style mini player */}
         {isMinimized && (
-          <div className="relative border-t border-border/80 bg-card/95 backdrop-blur-md">
+          <div className="relative rounded-b-[var(--radius-xl)] glass-chrome">
             {/* Slim playback progress bar */}
-            <div className="absolute top-0 left-0 right-0 h-0.5 bg-muted/40 overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden bg-[var(--ios-fill-3)]">
               <div
-                className="h-full bg-primary transition-all duration-200"
+                className="h-full bg-[var(--ios-label)] transition-all duration-200"
                 style={{
                   width: `${duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0}%`,
                 }}
               />
             </div>
 
-            <div className="flex items-center justify-between p-2.5 pt-3">
-              <div className="flex min-w-0 flex-1 flex-col pr-2">
-                <span className="truncate text-xs font-semibold text-foreground leading-tight" title={meta?.title}>
+            <div className="flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)] pt-[calc(var(--space-2)+2px)]">
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span
+                  className="truncate text-footnote font-medium leading-tight text-[var(--ios-label)]"
+                  style={{ letterSpacing: "var(--tracking-footnote)" }}
+                  title={meta?.title}
+                >
                   {meta?.title ?? "Playing"}
                 </span>
-                <span className="truncate text-[10px] text-muted-foreground mt-0.5">
+                <span
+                  className="truncate text-caption-2 leading-snug text-[var(--ios-label-2)]"
+                  style={{ letterSpacing: "var(--tracking-caption)" }}
+                >
                   {meta?.authorName ? meta.authorName : isPlaying ? "Playing" : "Paused"}
                 </span>
               </div>
@@ -184,40 +211,40 @@ export function AmbientStage({
                   variant="ghost"
                   size="icon"
                   onClick={onPrev}
-                  className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground cursor-pointer"
+                  className="interactive tap-compact size-8 rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-label)]"
                   title="Previous"
                 >
-                  <SkipBack className="size-3.5" />
+                  <SkipBack className="size-4" />
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
                   onClick={onTogglePlay}
-                  className="h-7 w-7 rounded-full bg-foreground text-background hover:bg-foreground/90 hover:text-background cursor-pointer"
+                  className="interactive tap-compact size-9 rounded-full bg-[var(--ios-label)] text-[var(--ios-bg)] hover:bg-[var(--ios-label)]/85 hover:text-[var(--ios-bg)]"
                   title={isPlaying ? "Pause" : "Play"}
                 >
-                  {isPlaying ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 fill-current ml-0.5" />}
+                  {isPlaying ? <Pause className="size-4 fill-current" /> : <Play className="size-4 fill-current ml-0.5" />}
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
                   onClick={onNext}
-                  className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground cursor-pointer"
+                  className="interactive tap-compact size-8 rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-label)]"
                   title="Next"
                 >
-                  <SkipForward className="size-3.5" />
+                  <SkipForward className="size-4" />
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
                   onClick={onToggleMinimize}
-                  className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground cursor-pointer"
+                  className="interactive tap-compact size-8 rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-label)]"
                   title="Expand back to stage"
                 >
-                  <Maximize2 className="size-3.5" />
+                  <Maximize2 className="size-4" />
                 </Button>
                 {onClose && (
                   <Button
@@ -225,10 +252,10 @@ export function AmbientStage({
                     variant="ghost"
                     size="icon"
                     onClick={onClose}
-                    className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground hover:bg-destructive/10 hover:text-destructive cursor-pointer"
+                    className="interactive tap-compact size-8 rounded-full text-[var(--ios-label-3)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-red)]"
                     title="Close mini player"
                   >
-                    <X className="size-3.5" />
+                    <X className="size-4" />
                   </Button>
                 )}
               </div>

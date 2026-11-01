@@ -192,29 +192,33 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85">
-      <div className="flex h-14 items-center gap-4 px-4">
+    /* iOS navigation bar: glass-chrome material, sticky */
+    <header className="glass-chrome sticky top-0 z-40">
+      {/* 44pt controls centred in --nav-height, 16pt horizontal margins */}
+      <div className="flex h-[var(--nav-height)] items-center gap-[var(--space-3)] px-[var(--space-4)]">
         <button
           type="button"
           onClick={onHome}
-          className={`shrink-0 items-center gap-2 rounded-md cursor-pointer ${mobileSearch ? "hidden sm:flex" : "flex"}`}
+          className={`interactive shrink-0 cursor-pointer items-center gap-[var(--space-2)] rounded-[var(--radius-sm)] ${
+            mobileSearch ? "hidden sm:flex" : "flex"
+          }`}
           aria-label="xyz home"
         >
           {/* Axis mark: x, y and z meeting at an origin */}
-          <svg viewBox="0 0 24 24" className="size-6" aria-hidden="true">
+          <svg viewBox="0 0 24 24" className="size-6 shrink-0" aria-hidden="true">
             <path d="M9 15V3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
             <path d="M9 15h12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
             <path d="M9 15l-6 6" className="stroke-brand" strokeWidth="2.2" strokeLinecap="round" />
             <circle cx="9" cy="15" r="2.2" className="fill-brand" />
           </svg>
-          <span className="font-display text-xl font-bold tracking-tight">xyz</span>
+          <span className="font-display text-title-3 font-bold tracking-[var(--tracking-title-3)]">xyz</span>
         </button>
 
         {mobileSearch && (
           <button
             type="button"
             onClick={() => setMobileSearch(false)}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] hover:bg-secondary sm:hidden cursor-pointer"
+            className="interactive flex size-[var(--space-tap)] shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] hover:bg-[var(--ios-fill-3)] sm:hidden"
             aria-label="Close search"
           >
             <ArrowLeft className="size-5" />
@@ -229,8 +233,8 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
           }}
           className={`relative mx-auto w-full max-w-[640px] ${mobileSearch ? "flex" : "hidden sm:flex"}`}
         >
-          <div className="flex h-10 flex-1 items-center gap-2 rounded-xl border border-border bg-input-bg pl-3 pr-1 transition-colors focus-within:border-brand/60">
-            <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <div className="flex h-[var(--space-tap)] flex-1 items-center gap-[var(--space-2)] rounded-full border border-[var(--ios-separator)] bg-[var(--ios-fill-3)] pl-[var(--space-4)] pr-[var(--space-1)] backdrop-blur-sm transition-colors focus-within:border-[var(--ios-blue)]">
+            <Search className="size-4 shrink-0 text-[var(--ios-label-3)]" aria-hidden="true" />
             <input
               ref={inputRef}
               type="search"
@@ -250,7 +254,7 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
               aria-autocomplete="list"
               aria-activedescendant={highlight >= 0 ? `search-suggestion-${highlight}` : undefined}
               aria-expanded={open}
-              className="h-full w-full bg-transparent text-base outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
+              className="w-full min-w-0 bg-transparent text-body leading-none tracking-[var(--tracking-body)] outline-none placeholder:text-[var(--ios-placeholder)] [&::-webkit-search-cancel-button]:hidden"
             />
             {query && (
               <button
@@ -260,17 +264,17 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
                   setSuggestions([]);
                   inputRef.current?.focus();
                 }}
-                className="flex h-8 w-8 items-center justify-center rounded-[10px] hover:bg-secondary cursor-pointer"
+                className="interactive tap-compact flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-4)]"
                 aria-label="Clear search"
               >
-                <X className="size-5" />
+                <X className="size-3.5" />
               </button>
             )}
             <button
               type="submit"
               disabled={!query.trim()}
               aria-label="Submit search"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-brand text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              className="interactive tap-compact mr-[0.3125rem] flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[var(--ios-blue)] text-white disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Search className="size-4" aria-hidden="true" />
             </button>
@@ -282,24 +286,24 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
               role="listbox"
               aria-label="Search suggestions and recent searches"
               onMouseLeave={() => setHighlight(-1)}
-              className="absolute left-0 right-0 top-12 z-50 overflow-hidden rounded-xl border border-border bg-popover py-2 shadow-2xl"
+              className="glass-regular absolute left-0 right-0 top-[calc(var(--space-tap)+var(--space-2))] z-50 overflow-hidden rounded-[var(--radius-lg)] border border-[var(--ios-separator)] py-[var(--space-2)] shadow-[0_24px_48px_-12px_rgba(0,0,0,0.7)]"
             >
               {history.length > 0 && (
-                <div role="presentation" className="flex items-center justify-between px-4 pb-1 pt-1">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent searches</p>
+                <div role="presentation" className="flex items-center justify-between px-[var(--space-4)] pb-1 pt-1">
+                    <p className="text-caption-1 font-semibold uppercase tracking-[var(--tracking-caption)] text-[var(--ios-label-2)]">Recent searches</p>
                     <button
                       type="button"
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={clearHistory}
-                      className="rounded px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground focus-visible:text-foreground"
+                      className="interactive tap-compact cursor-pointer rounded-[var(--radius-xs)] px-1 py-0.5 text-footnote text-[var(--ios-label-2)] hover:text-[var(--ios-label)] focus-visible:text-[var(--ios-label)]"
                     >
                       Clear search history
                     </button>
                 </div>
               )}
               {remoteSuggestions.length > 0 && (
-                <div role="presentation" className="px-4 pb-1 pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {history.length > 0 && <div className="mb-2 border-t border-border" />}
+                <div role="presentation" className="px-[var(--space-4)] pb-1 pt-1 text-caption-1 font-semibold uppercase tracking-[var(--tracking-caption)] text-[var(--ios-label-2)]">
+                  {history.length > 0 && <div className="mb-2 border-t border-[var(--ios-separator)]" />}
                   Suggestions
                 </div>
               )}
@@ -307,7 +311,7 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
                 <div
                   key={`${item.source}-${item.query}`}
                   role="presentation"
-                  className={`relative flex items-center pr-1.5 ${i === highlight ? "bg-muted" : ""}`}
+                  className={`relative flex items-center pr-[var(--space-1)] ${i === highlight ? "bg-[var(--ios-fill-4)]" : ""}`}
                 >
                   {i === highlight && <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-[3px] rounded-full bg-brand" />}
                   <button
@@ -318,12 +322,12 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
                     onMouseEnter={() => setHighlight(i)}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => submit(item.query)}
-                    className="flex min-w-0 flex-1 items-center gap-3 py-2 pl-4 text-left text-sm cursor-pointer"
+                    className="interactive tap-compact flex min-w-0 flex-1 cursor-pointer items-center gap-[var(--space-3)] py-[var(--space-2)] pl-[var(--space-4)] text-left text-body tracking-[var(--tracking-body)]"
                   >
                     {item.source === "history" ? (
-                      <Clock3 className={`size-4 shrink-0 ${i === highlight ? "text-brand" : "text-muted-foreground"}`} />
+                      <Clock3 className={`size-4 shrink-0 ${i === highlight ? "text-[var(--ios-blue)]" : "text-[var(--ios-label-3)]"}`} />
                     ) : (
-                      <Search className={`size-4 shrink-0 ${i === highlight ? "text-brand" : "text-muted-foreground"}`} />
+                      <Search className={`size-4 shrink-0 ${i === highlight ? "text-[var(--ios-blue)]" : "text-[var(--ios-label-3)]"}`} />
                     )}
                     <span className="truncate">{item.query}</span>
                   </button>
@@ -333,7 +337,7 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => removeHistoryItem(item.query)}
                       aria-label={`Remove ${item.query} from search history`}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-background/60 hover:text-foreground cursor-pointer"
+                      className="interactive tap-compact flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-[var(--ios-label-3)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-label)]"
                     >
                       <X className="size-4" />
                     </button>
@@ -345,7 +349,7 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
                       onClick={() => fillQuery(item.query)}
                       title="Fill in search"
                       aria-label={`Fill search with ${item.query}`}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-background/60 hover:text-brand cursor-pointer"
+                      className="interactive tap-compact flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-[var(--ios-label-3)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-blue)]"
                     >
                       <ArrowUpLeft className="size-4" />
                     </button>
@@ -353,7 +357,7 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
                 </div>
               ))}
               {matchingHistory.length === 0 && remoteSuggestions.length === 0 && (
-                <p className="px-4 py-3 text-sm text-muted-foreground" role="status">
+                <p className="px-[var(--space-4)] py-[var(--space-3)] text-body text-[var(--ios-label-2)]" role="status">
                   {trimmedQuery.length === 0
                     ? historyAvailable
                       ? "Your recent searches will appear here."
@@ -368,13 +372,13 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
                 </p>
               )}
               {matchingHistory.length > 0 && suggestionsLoading && (
-                <p className="px-4 py-2 text-xs text-muted-foreground" role="status">Loading suggestions...</p>
+                <p className="px-[var(--space-4)] py-[var(--space-2)] text-footnote text-[var(--ios-label-2)]" role="status">Loading suggestions...</p>
               )}
               {suggestionsFailed && trimmedQuery.length >= 2 && (
-                <p className="px-4 py-2 text-xs text-muted-foreground" role="status">Suggestions are temporarily unavailable.</p>
+                <p className="px-[var(--space-4)] py-[var(--space-2)] text-footnote text-[var(--ios-label-2)]" role="status">Suggestions are temporarily unavailable.</p>
               )}
               {!historyAvailable && (
-                <p className="px-4 py-2 text-xs text-muted-foreground" role="status">
+                <p className="px-[var(--space-4)] py-[var(--space-2)] text-footnote text-[var(--ios-label-2)]" role="status">
                   Search history changes are not being saved in this browser.
                 </p>
               )}
@@ -389,7 +393,7 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
               setMobileSearch(true);
               setTimeout(() => inputRef.current?.focus(), 0);
             }}
-            className="flex h-10 w-10 items-center justify-center rounded-[10px] hover:bg-secondary sm:hidden cursor-pointer"
+            className="interactive flex size-[var(--space-tap)] cursor-pointer items-center justify-center rounded-[var(--radius-md)] hover:bg-[var(--ios-fill-3)] sm:hidden"
             aria-label="Search"
           >
             <Search className="size-5" />
@@ -397,7 +401,7 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
           <button
             type="button"
             onClick={onOpenSettings}
-            className="flex h-10 w-10 items-center justify-center rounded-[10px] hover:bg-secondary cursor-pointer"
+            className="interactive flex size-[var(--space-tap)] cursor-pointer items-center justify-center rounded-[var(--radius-md)] hover:bg-[var(--ios-fill-3)]"
             aria-label="Settings"
           >
             <Settings className="size-5" />

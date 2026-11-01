@@ -1,158 +1,695 @@
 @import "tailwindcss";
 
+/* ═══════════════════════════════════════════════════════════
+   iOS Design System — 100% authentic Apple Human Interface
+   Guidelines values, dark mode (iOS 15–18 UIKit spec).
+
+   Sources:
+   - Apple UIKit UIColor system color values (community-measured,
+     cross-checked against iOS Simulator pixel values)
+   - Apple HIG: Typography, Color, Layout, Materials
+   - WWDC 2018 "Designing Fluid Interfaces"
+   - WWDC 2020 "The Details of UI Typography"
+   - WWDC 2025 "Liquid Glass" material spec
+
+   All colors are the DARK MODE values — the app always runs
+   in dark mode (html.dark). iOS dark mode is NOT inverted
+   light mode: backgrounds are true black (#000000), labels
+   are pure white, and grays flip direction.
+═══════════════════════════════════════════════════════════ */
+
 @layer base {
   :root {
-    --background: #111113;
-    --foreground: #f4f4f5;
-    --card: #19191c;
-    --card-foreground: #f4f4f5;
-    --popover: #19191c;
-    --popover-foreground: #f4f4f5;
-    --primary: #e4e4e7;
-    --primary-foreground: #111113;
-    --secondary: #232327;
-    --secondary-foreground: #f4f4f5;
-    --muted: #232327;
-    --muted-foreground: #a1a1aa;
-    --accent: #9cafaa;
-    --accent-foreground: #111113;
-    --destructive: #ef4444;
-    --destructive-foreground: #fafafa;
-    --border: #303036;
-    --input: #1f1f23;
-    --ring: #9cafaa;
-    --radius: 0.5rem;
-    --brand: #9cafaa;
-    --link: #e4e4e7;
-    --input-bg: #17171b;
-    --surface: #19191c;
-    --surface-hover: #232327;
-    --text-primary: #f4f4f5;
-    --text-secondary: #a1a1aa;
-    --action-primary: #e4e4e7;
-    --accent-muted: #9cafaa;
+    /* ── iOS systemBackground layer stack (dark mode) ──────
+       systemBackground         = #000000  (primary view BG)
+       secondarySystemBackground = #1C1C1E  (grouped cells)
+       tertiarySystemBackground  = #2C2C2E  (nested groups)
+       systemGroupedBackground   = #000000  (grouped table BG)
+       secondaryGroupedBackground = #1C1C1E (list rows)
+       tertiaryGroupedBackground  = #2C2C2E (sub-lists)
+    ────────────────────────────────────────────────────── */
+    --ios-bg:            #000000;   /* systemBackground        */
+    --ios-bg-2:          #1c1c1e;   /* secondarySystemBackground */
+    --ios-bg-3:          #2c2c2e;   /* tertiarySystemBackground */
+    --ios-grouped-bg:    #000000;   /* systemGroupedBackground */
+    --ios-grouped-bg-2:  #1c1c1e;   /* secondaryGroupedBackground */
+    --ios-grouped-bg-3:  #2c2c2e;   /* tertiaryGroupedBackground */
+
+    /* ── iOS Label hierarchy (dark mode) ──────────────────
+       label              = #FFFFFF           (primary text)
+       secondaryLabel     = rgba(235,235,245,0.60) ~60%
+       tertiaryLabel      = rgba(235,235,245,0.30) ~30%
+       quaternaryLabel    = rgba(235,235,245,0.18) ~18%
+       placeholderText    = rgba(235,235,245,0.30)
+    ────────────────────────────────────────────────────── */
+    --ios-label:          #ffffff;
+    --ios-label-2:        rgba(235,235,245,0.60);
+    --ios-label-3:        rgba(235,235,245,0.30);
+    --ios-label-4:        rgba(235,235,245,0.18);
+    --ios-placeholder:    rgba(235,235,245,0.30);
+
+    /* ── iOS Fill colors (dark mode) ──────────────────────
+       systemFill          = rgba(120,120,128,0.36)  thin elements
+       secondarySystemFill = rgba(120,120,128,0.32)  medium
+       tertiarySystemFill  = rgba(118,118,128,0.24)  thick (search bar BG)
+       quaternarySystemFill= rgba(116,116,128,0.18)  large BG areas
+    ────────────────────────────────────────────────────── */
+    --ios-fill:    rgba(120,120,128,0.36);
+    --ios-fill-2:  rgba(120,120,128,0.32);
+    --ios-fill-3:  rgba(118,118,128,0.24);
+    --ios-fill-4:  rgba(116,116,128,0.18);
+
+    /* ── iOS Separator colors (dark mode) ─────────────────
+       separator       = rgba(84,84,88,0.60)   translucent divider
+       opaqueSeparator = #38383A               use on non-blur surfaces
+    ────────────────────────────────────────────────────── */
+    --ios-separator:        rgba(84,84,88,0.60);
+    --ios-separator-opaque: #38383a;
+
+    /* ── iOS Gray scale (dark mode) ───────────────────────
+       systemGray  = #8E8E93  (same light/dark — intentional)
+       systemGray2 = #636366
+       systemGray3 = #48484A
+       systemGray4 = #3A3A3C
+       systemGray5 = #2C2C2E
+       systemGray6 = #1C1C1E
+    ────────────────────────────────────────────────────── */
+    --ios-gray:   #8e8e93;
+    --ios-gray-2: #636366;
+    --ios-gray-3: #48484a;
+    --ios-gray-4: #3a3a3c;
+    --ios-gray-5: #2c2c2e;
+    --ios-gray-6: #1c1c1e;
+
+    /* ── iOS System accent colors (dark mode hex) ─────────
+       systemBlue   = #0A84FF   (tint, links, primary action)
+       systemGreen  = #30D158   (success, positive)
+       systemRed    = #FF453A   (destructive, error)
+       systemOrange = #FF9F0A   (warning, medium-importance)
+       systemYellow = #FFD60A   (caution, attention)
+       systemPink   = #FF375F   (social, affection)
+       systemPurple = #BF5AF2   (creative, premium)
+       systemIndigo = #5E5CE6   (distinctive)
+       systemTeal   = #64D2FF   (informational, tech)
+       systemMint   = #63E6E2   (wellness, subtle positive)
+       systemCyan   = #64D2FF   same as teal on dark
+    ────────────────────────────────────────────────────── */
+    --ios-blue:   #0a84ff;
+    --ios-green:  #30d158;
+    --ios-red:    #ff453a;
+    --ios-orange: #ff9f0a;
+    --ios-yellow: #ffd60a;
+    --ios-pink:   #ff375f;
+    --ios-purple: #bf5af2;
+    --ios-indigo: #5e5ce6;
+    --ios-teal:   #64d2ff;
+    --ios-mint:   #63e6e2;
+    --ios-brown:  #ac8e68;
+
+    /* ── Liquid Glass material (iOS 26 / WWDC25) ──────────
+       Translucent layers that reflect and refract surroundings.
+       Web approximation via backdrop-filter blur + saturate.
+       Three weights matching UIBlurEffect styles:
+         systemUltraThinMaterial — barely-there chrome
+         systemThinMaterial      — light panels, tooltips
+         systemMaterial          — nav bars, sheets
+         systemThickMaterial     — prominent modals
+         systemChromeMaterial    — tab bars, toolbars
+    ────────────────────────────────────────────────────── */
+    --glass-ultra-thin:   rgba(28,28,30,0.55);
+    --glass-thin:         rgba(28,28,30,0.65);
+    --glass-regular:      rgba(28,28,30,0.75);
+    --glass-thick:        rgba(28,28,30,0.82);
+    --glass-chrome:       rgba(28,28,30,0.88);
+
+    /* ── Tailwind semantic alias mapping ──────────────────
+       Maps iOS semantic token names to the CSS variable
+       names Tailwind components use throughout the app.
+    ────────────────────────────────────────────────────── */
+
+    /* Backgrounds */
+    --background:    var(--ios-bg);
+    --card:          var(--ios-bg-2);
+    --popover:       var(--ios-bg-2);
+    --secondary:     var(--ios-fill-3);   /* search bars, input fills */
+    --muted:         var(--ios-fill-4);   /* skeleton shimmer base */
+
+    /* Text */
+    --foreground:         var(--ios-label);
+    --card-foreground:    var(--ios-label);
+    --popover-foreground: var(--ios-label);
+    --secondary-foreground: var(--ios-label-2);
+    --muted-foreground:     var(--ios-label-2);
+
+    /* Borders / dividers */
+    --border:    var(--ios-separator);
+    --input:     var(--ios-fill-3);
+    --input-bg:  var(--ios-fill-4);
+    --ring:      var(--ios-blue);     /* focus rings use systemBlue */
+
+    /* Semantic states */
+    --destructive:            var(--ios-red);
+    --destructive-foreground: #ffffff;
+
+    /* Brand — iOS systemBlue as primary tint */
+    --brand:             var(--ios-blue);
+    --accent:            var(--ios-blue);
+    --accent-foreground: #ffffff;
+    --accent-muted:      rgba(10,132,255,0.18);
+
+    /* Primary interactive (high-contrast button fill) */
+    --primary:            var(--ios-blue);
+    --primary-foreground: #ffffff;
+
+    /* Misc */
+    --link:          var(--ios-blue);
+    --action-primary: var(--ios-blue);
+
+    /* Surface aliases for Liquid Glass classes */
+    --surface:       var(--ios-bg-2);
+    --surface-hover: var(--ios-bg-3);
+    --surface-thin:  var(--glass-thin);
+    --surface-chrome: var(--glass-chrome);
+
+    /* Legacy aliases used in components */
+    --text-primary:   var(--ios-label);
+    --text-secondary: var(--ios-label-2);
+    --text-tertiary:  var(--ios-label-3);
+
+    /* ── Radius — iOS continuous-curve (squircle) ─────────
+       iOS uses a "superellipse" corner. 10pt is the default
+       for list cells and cards. 12–14pt for sheets/modals.
+       Translate 1pt ≈ 1.333px (1px = 0.75pt on 1x displays).
+       We use rem to stay Dynamic-Type-friendly.
+    ────────────────────────────────────────────────────── */
+    --radius: 0.625rem; /* 10px ≈ 10pt — iOS standard cell radius */
   }
 
+  /* Dark class = same as :root (always dark) */
   .dark {
-    --background: #111113;
-    --foreground: #f4f4f5;
-    --card: #19191c;
-    --card-foreground: #f4f4f5;
-    --popover: #19191c;
-    --popover-foreground: #f4f4f5;
-    --primary: #e4e4e7;
-    --primary-foreground: #111113;
-    --secondary: #232327;
-    --secondary-foreground: #f4f4f5;
-    --muted: #232327;
-    --muted-foreground: #a1a1aa;
-    --accent: #9cafaa;
-    --accent-foreground: #111113;
-    --destructive: #ef4444;
-    --destructive-foreground: #fafafa;
-    --border: #303036;
-    --input: #1f1f23;
-    --ring: #9cafaa;
-    --brand: #9cafaa;
-    --link: #e4e4e7;
-    --input-bg: #17171b;
-    --surface: #19191c;
-    --surface-hover: #232327;
-    --text-primary: #f4f4f5;
-    --text-secondary: #a1a1aa;
-    --action-primary: #e4e4e7;
-    --accent-muted: #9cafaa;
+    --background:    var(--ios-bg);
+    --card:          var(--ios-bg-2);
+    --popover:       var(--ios-bg-2);
+    --secondary:     var(--ios-fill-3);
+    --muted:         var(--ios-fill-4);
+    --foreground:         var(--ios-label);
+    --card-foreground:    var(--ios-label);
+    --popover-foreground: var(--ios-label);
+    --secondary-foreground: var(--ios-label-2);
+    --muted-foreground:     var(--ios-label-2);
+    --border:    var(--ios-separator);
+    --input:     var(--ios-fill-3);
+    --input-bg:  var(--ios-fill-4);
+    --ring:      var(--ios-blue);
+    --destructive:            var(--ios-red);
+    --destructive-foreground: #ffffff;
+    --brand:             var(--ios-blue);
+    --accent:            var(--ios-blue);
+    --accent-foreground: #ffffff;
+    --accent-muted:      rgba(10,132,255,0.18);
+    --primary:            var(--ios-blue);
+    --primary-foreground: #ffffff;
+    --link:          var(--ios-blue);
+    --action-primary: var(--ios-blue);
+    --radius: 0.625rem;
   }
 }
 
+/* ── Tailwind v4 @theme export ────────────────────────── */
 @theme {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
+  /* All Tailwind color-* utilities map to iOS semantic tokens */
+  --color-background:          var(--background);
+  --color-foreground:          var(--foreground);
+  --color-card:                var(--card);
+  --color-card-foreground:     var(--card-foreground);
+  --color-popover:             var(--popover);
+  --color-popover-foreground:  var(--popover-foreground);
+  --color-primary:             var(--primary);
+  --color-primary-foreground:  var(--primary-foreground);
+  --color-secondary:           var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
+  --color-muted:               var(--muted);
+  --color-muted-foreground:    var(--muted-foreground);
+  --color-accent:              var(--accent);
+  --color-accent-foreground:   var(--accent-foreground);
+  --color-destructive:         var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-brand: var(--brand);
-  --color-link: var(--link);
-  --color-input-bg: var(--input-bg);
-  --font-sans: var(--font-instrument), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-bricolage), var(--font-instrument), ui-sans-serif, sans-serif;
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --color-border:              var(--border);
+  --color-input:               var(--input);
+  --color-ring:                var(--ring);
+  --color-brand:               var(--brand);
+  --color-link:                var(--link);
+  --color-input-bg:            var(--input-bg);
+  --color-surface-thin:        var(--glass-thin);
+  --color-surface-regular:     var(--glass-regular);
+  --color-surface-thick:       var(--glass-thick);
+  --color-surface-chrome:      var(--glass-chrome);
+
+  /* Full iOS system color palette available as Tailwind utilities */
+  --color-ios-blue:    var(--ios-blue);
+  --color-ios-green:   var(--ios-green);
+  --color-ios-red:     var(--ios-red);
+  --color-ios-orange:  var(--ios-orange);
+  --color-ios-yellow:  var(--ios-yellow);
+  --color-ios-pink:    var(--ios-pink);
+  --color-ios-purple:  var(--ios-purple);
+  --color-ios-indigo:  var(--ios-indigo);
+  --color-ios-teal:    var(--ios-teal);
+  --color-ios-mint:    var(--ios-mint);
+  --color-ios-gray:    var(--ios-gray);
+  --color-ios-gray-2:  var(--ios-gray-2);
+  --color-ios-gray-3:  var(--ios-gray-3);
+  --color-ios-gray-4:  var(--ios-gray-4);
+  --color-ios-gray-5:  var(--ios-gray-5);
+  --color-ios-gray-6:  var(--ios-gray-6);
+  --color-ios-bg:      var(--ios-bg);
+  --color-ios-bg-2:    var(--ios-bg-2);
+  --color-ios-bg-3:    var(--ios-bg-3);
+
+  /* ── SF Pro Dynamic Type scale (iOS 17+ default Large size)
+     iOS points map 1:1 to CSS px, so 17pt = 17px = 1.0625rem.
+     (Converting at 1pt = 1.333px inflates every size by ~33%.)
+     ─────────────────────────────────────────────────────
+     Style        pt   px    rem      weight
+     Large Title  34   34    2.125    Bold (700)
+     Title 1      28   28    1.75     Bold (700)
+     Title 2      22   22    1.375    Bold (700)
+     Title 3      20   20    1.25     Semibold (600)
+     Headline     17   17    1.0625   Semibold (600)
+     Body         17   17    1.0625   Regular (400)
+     Callout      16   16    1.0      Regular (400)
+     Subhead      15   15    0.9375   Regular (400)
+     Footnote     13   13    0.8125   Regular (400)
+     Caption 1    12   12    0.75     Regular (400)
+     Caption 2    11   11    0.6875   Regular (400)
+  ────────────────────────────────────────────────────── */
+  --text-large-title: 2.125rem;   /* 34pt — navigation collapse   */
+  --text-title-1:     1.75rem;    /* 28pt — page titles           */
+  --text-title-2:     1.375rem;   /* 22pt — section headers       */
+  --text-title-3:     1.25rem;    /* 20pt — subsection headers    */
+  --text-headline:    1.0625rem;  /* 17pt semibold — emphasized   */
+  --text-body:        1.0625rem;  /* 17pt regular — primary body  */
+  --text-callout:     1rem;       /* 16pt — secondary content     */
+  --text-subhead:     0.9375rem;  /* 15pt — tertiary              */
+  --text-footnote:    0.8125rem;  /* 13pt — timestamps, captions  */
+  --text-caption-1:   0.75rem;    /* 12pt — annotations           */
+  --text-caption-2:   0.6875rem;  /* 11pt — fine print            */
+
+  /* ── SF Pro typography: optical tracking (letter-spacing)
+     Apple specifies size-specific tracking — NOT a global value.
+     Large text needs negative tracking (letters spread apart).
+     Body needs ~0. Small needs slightly positive for legibility.
+  ────────────────────────────────────────────────────── */
+  --tracking-large-title: -0.025em;  /* 34pt: tight */
+  --tracking-title-1:     -0.022em;  /* 28pt */
+  --tracking-title-2:     -0.018em;  /* 22pt */
+  --tracking-title-3:     -0.012em;  /* 20pt */
+  --tracking-headline:    -0.005em;  /* 17pt semibold */
+  --tracking-body:         0em;      /* 17pt: neutral */
+  --tracking-callout:      0em;      /* 16pt */
+  --tracking-subhead:      0em;      /* 15pt */
+  --tracking-footnote:     0.003em;  /* 13pt: slightly open */
+  --tracking-caption:      0.005em;  /* 12pt: open for legibility */
+
+  /* ── SF Pro leading (line-height)
+     Tight at large sizes, generous at body/small sizes.
+  ────────────────────────────────────────────────────── */
+  --leading-large-title: 1.06;
+  --leading-title-1:     1.08;
+  --leading-title-2:     1.14;
+  --leading-title-3:     1.20;
+  --leading-headline:    1.30;
+  --leading-body:        1.47;  /* iOS body = 22/17 ≈ 1.47 */
+  --leading-callout:     1.50;
+  --leading-subhead:     1.53;
+  --leading-footnote:    1.54;
+  --leading-caption:     1.50;
+
+  /* ── iOS 8pt spacing grid ─────────────────────────────
+     iOS uses 4pt base, 8pt standard, 16pt screen margin.
+     1pt = 1px = 0.0625rem.
+     4pt  →  4px → 0.25rem   (hairline gaps)
+     8pt  →  8px → 0.5rem    (icon ↔ label gap)
+     12pt → 12px → 0.75rem   (button vertical padding)
+     16pt → 16px → 1rem      (screen horizontal margin)
+     20pt → 20px → 1.25rem   (card internal padding)
+     24pt → 24px → 1.5rem    (section spacing)
+     44pt → 44px → 2.75rem   (minimum tap target!)
+  ────────────────────────────────────────────────────── */
+  --space-1:  0.25rem;   /* 4pt  */
+  --space-2:  0.5rem;    /* 8pt  */
+  --space-3:  0.75rem;   /* 12pt */
+  --space-4:  1rem;      /* 16pt */
+  --space-5:  1.25rem;   /* 20pt */
+  --space-6:  1.5rem;    /* 24pt */
+  --space-tap: 2.75rem;  /* 44pt minimum tap target */
+
+  /* Navigation bar height: 44pt of controls plus 8pt of breathing
+     room above and below, so a full-height capsule never touches
+     the bar edges. Sticky content offsets itself by this. */
+  --nav-height: 3.75rem; /* 60px */
+
+  /* Fonts — SF Pro is not available on web; we use
+     system-ui which maps to SF Pro on Apple devices and
+     Segoe UI on Windows. On Apple hardware this is 1:1. */
+  --font-sans:    system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-display: system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:    "SF Mono", ui-monospace, "Cascadia Code", Menlo, monospace;
+
+  /* ── iOS continuous-curve (squircle) radius scale ─────
+     iOS corner radius is a superellipse, not a circular arc.
+     Standard values (1pt = 1px):
+     Chips/pills    → 999px (fully rounded)
+     Small controls → 6pt  = 6px  = 0.375rem
+     Controls       → 8pt  = 8px  = 0.5rem
+     Input fields   → 10pt = 10px = 0.625rem
+     Sheets/popovers→ 13pt = 13px = 0.8125rem
+     Large cards    → 16pt = 16px = 1rem
+     Full-screen    → 22pt = 22px = 1.375rem
+  ────────────────────────────────────────────────────── */
+  --radius-xs:  0.375rem;   /* 6pt  — chips in dense UI     */
+  --radius-sm:  0.5rem;     /* 8pt  — small controls        */
+  --radius-md:  0.625rem;   /* 10pt — inputs, cells, cards  */
+  --radius-lg:  0.8125rem;  /* 13pt — sheets, popovers      */
+  --radius-xl:  1rem;       /* 16pt — large cards, banners  */
+  --radius-2xl: 1.375rem;   /* 22pt — full-screen modals    */
 }
 
+/* ═══════════════════════════════════════════════════════════
+   Base layer — body, heading scale, interactive resets
+═══════════════════════════════════════════════════════════ */
 @layer base {
   * {
-    border-color: var(--border);
+    border-color: var(--ios-separator);
+    -webkit-tap-highlight-color: transparent;
   }
+
+  html {
+    /* iOS uses true-black OLED background — no tint */
+    background-color: var(--ios-bg);
+  }
+
   body {
-    background-color: var(--background);
-    color: var(--foreground);
+    background-color: var(--ios-bg);
+    color: var(--ios-label);
+
+    /* SF Pro on Apple devices, system-ui elsewhere */
     font-family: var(--font-sans);
-    font-feature-settings: "rlig" 1, "calt" 1;
-    line-height: 1.5;
+    font-size: var(--text-body);         /* 17pt body */
+    line-height: var(--leading-body);    /* 22/17 ≈ 1.47 */
+    letter-spacing: var(--tracking-body);
+    font-weight: 400;
+    font-optical-sizing: auto;
+    font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+
+    /* Sub-pixel rendering — iOS uses subpixel antialiasing */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
   }
-  h1, h2, h3, h4, h5, h6 {
-    letter-spacing: -0.02em;
+
+  /* ── iOS Dynamic Type scale applied to heading elements ─
+     Each heading maps to the closest iOS text style.
+     letter-spacing and line-height are size-specific.    */
+  h1 {
+    font-size:      var(--text-title-1);       /* 28pt */
+    font-weight:    700;
+    line-height:    var(--leading-title-1);
+    letter-spacing: var(--tracking-title-1);
+    font-optical-sizing: auto;
   }
-  p, span, button, input, textarea, select {
-    letter-spacing: normal;
+  h2 {
+    font-size:      var(--text-title-2);       /* 22pt */
+    font-weight:    700;
+    line-height:    var(--leading-title-2);
+    letter-spacing: var(--tracking-title-2);
   }
+  h3 {
+    font-size:      var(--text-title-3);       /* 20pt */
+    font-weight:    600;
+    line-height:    var(--leading-title-3);
+    letter-spacing: var(--tracking-title-3);
+  }
+  h4 {
+    font-size:      var(--text-headline);      /* 17pt semibold */
+    font-weight:    600;
+    line-height:    var(--leading-headline);
+    letter-spacing: var(--tracking-headline);
+  }
+  h5, h6 {
+    font-size:      var(--text-callout);       /* 16pt */
+    font-weight:    600;
+    line-height:    var(--leading-callout);
+    letter-spacing: var(--tracking-callout);
+  }
+
+  /* Body-range elements: tracking near zero */
+  p, li {
+    letter-spacing: var(--tracking-body);
+    line-height:    var(--leading-body);
+  }
+
+  /* Small/meta text */
+  small, .text-xs, .text-sm {
+    letter-spacing: var(--tracking-caption);
+  }
+
+  /* ── Minimum tap target: 44pt (Apple HIG hard requirement)
+     All interactive elements must be at least 44×44pt.    */
+  button, a, [role="button"], input[type="checkbox"],
+  input[type="radio"], select {
+    min-height: var(--space-tap);   /* 44pt */
+    touch-action: manipulation;    /* no 300ms tap delay */
+  }
+  /* Compact controls live inside dense widgets (mini player, filter chips) where
+     a 44pt box would blow up the layout. Opt out and size them explicitly. */
+  .tap-compact {
+    min-height: 0;
+  }
+
+  /* Focus ring: iOS systemBlue, 2pt offset */
   :focus-visible {
-    outline: 2px solid var(--ring);
+    outline: 2px solid var(--ios-blue);
     outline-offset: 2px;
+    border-radius: var(--radius-sm);
   }
+
+  /* ═══════════════════════════════════════════════════════
+     Liquid Glass material helper classes
+     Apply to nav bars, sheets, popovers, cards.
+
+     Weight guide (matches UIBlurEffect):
+       .glass-ultra-thin  → tooltips, minimal overlays
+       .glass-thin        → popover panels, search results
+       .glass-regular     → nav bars, most sheets
+       .glass-thick       → prominent modals, action sheets
+       .glass-chrome      → tab bars, bottom toolbars
+  ═══════════════════════════════════════════════════════ */
+  .glass-ultra-thin {
+    background: var(--glass-ultra-thin);
+    -webkit-backdrop-filter: blur(10px) saturate(150%);
+    backdrop-filter: blur(10px) saturate(150%);
+    border: 1px solid rgba(255,255,255,0.07);
+  }
+  .glass-thin {
+    background: var(--glass-thin);
+    -webkit-backdrop-filter: blur(16px) saturate(170%);
+    backdrop-filter: blur(16px) saturate(170%);
+    border: 1px solid rgba(255,255,255,0.10);
+  }
+  .glass-regular {
+    background: var(--glass-regular);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255,255,255,0.12);
+  }
+  .glass-thick {
+    background: var(--glass-thick);
+    -webkit-backdrop-filter: blur(24px) saturate(190%);
+    backdrop-filter: blur(24px) saturate(190%);
+    border: 1px solid rgba(255,255,255,0.14);
+  }
+  /* Chrome = nav bar / tab bar material */
+  .glass-chrome {
+    background: var(--glass-chrome);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+    /* Bright top hairline: light catching the glass edge */
+    border-bottom: 0.5px solid rgba(255,255,255,0.14);
+  }
+
+  /* ── iOS button press feedback (pointer-down, not click)
+     Apple: "respond on pointer-down, not on release."
+     .interactive gives the spring-scale active state.    */
+  .interactive {
+    transition:
+      transform 100ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity   100ms cubic-bezier(0.22, 1, 0.36, 1);
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .interactive:active {
+    transform: scale(0.96);
+    opacity: 0.80;
+  }
+
+  /* ── iOS system-blue tinted button (primary action)
+     Filled, rounded, 44pt height minimum.               */
+  .btn-primary {
+    display:          inline-flex;
+    align-items:      center;
+    justify-content:  center;
+    gap:              0.5rem;
+    min-height:       var(--space-tap);   /* 44pt */
+    padding:          0 var(--space-4);   /* 16pt horizontal */
+    border-radius:    var(--radius-md);
+    background:       var(--ios-blue);
+    color:            #ffffff;
+    font-size:        var(--text-body);
+    font-weight:      600;
+    letter-spacing:   var(--tracking-body);
+    border:           none;
+    cursor:           pointer;
+  }
+  .btn-primary:active { background: rgba(10,132,255,0.85); }
+
+  /* ── Equalizer bars (decorative only — CSS animation OK) */
   @keyframes eq {
     0%, 100% { transform: scaleY(0.35); }
-    50% { transform: scaleY(1); }
+    50%       { transform: scaleY(1.0);  }
   }
   .eq-bar {
     transform-origin: bottom;
     animation: eq 0.9s ease-in-out infinite;
   }
+
+  /* ── Spring-feel animations (approximate critically-damped
+     spring: bounce=0, duration≈0.35s per Apple WWDC 2018).
+     cubic-bezier(0.22, 1, 0.36, 1) is the closest CSS
+     approximation of a spring with damping ratio 1.0.    */
+
+  /* Mini player entrance — from throw origin */
   @keyframes miniPlayerIn {
     0% {
-      opacity: 0.85;
-      transform: translate3d(28px, -40px, 0) scale(1.08);
-      box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.7);
+      opacity:   0.75;
+      transform: translate3d(20px, -32px, 0) scale(1.05);
+      box-shadow: 0 32px 64px -16px rgba(0,0,0,0.80);
     }
     100% {
-      opacity: 1;
+      opacity:   1;
       transform: translate3d(0, 0, 0) scale(1);
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 20px 40px -12px rgba(0,0,0,0.60);
     }
   }
   .animate-mini-in {
-    animation: miniPlayerIn 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    animation: miniPlayerIn 0.38s cubic-bezier(0.22, 1, 0.36, 1) forwards;
     will-change: transform, opacity;
   }
+
+  /* Generic appear — fade + 4pt rise (iOS "appear" convention) */
   @keyframes fadeIn {
-    0% { opacity: 0; transform: translateY(4px); }
-    100% { opacity: 1; transform: translateY(0); }
+    0%   { opacity: 0; transform: translateY(4px); }
+    100% { opacity: 1; transform: translateY(0);   }
   }
   .animate-fadeIn {
-    animation: fadeIn 0.25s ease-out forwards;
+    animation: fadeIn 0.25s cubic-bezier(0.22, 1, 0.36, 1) forwards;
   }
+
+  /* Sheet slide-up — bottom sheets, action sheets */
+  @keyframes slideUp {
+    0%   { opacity: 0; transform: translateY(20px); }
+    100% { opacity: 1; transform: translateY(0);    }
+  }
+  .animate-slide-up {
+    animation: slideUp 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  /* Modal materialize — blur radius and scale animate together so the
+     surface reads as glass arriving rather than a plain opacity fade.
+     End state must match .glass-thick, since the fill overrides it. */
+  @keyframes modalIn {
+    0% {
+      opacity: 0.6;
+      transform: scale(1.06);
+      -webkit-backdrop-filter: blur(0px) saturate(100%);
+      backdrop-filter: blur(0px) saturate(100%);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+      -webkit-backdrop-filter: blur(24px) saturate(190%);
+      backdrop-filter: blur(24px) saturate(190%);
+    }
+  }
+  .animate-modal-in {
+    animation: modalIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    will-change: transform, opacity, backdrop-filter;
+  }
+
+  /* Scrim — dims and blurs the background as the material arrives */
+  @keyframes scrimIn {
+    from { opacity: 0; -webkit-backdrop-filter: blur(0px); backdrop-filter: blur(0px); }
+    to   { opacity: 1; -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+  }
+  .animate-scrim-in {
+    animation: scrimIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     Accessibility — all 3 Apple motion/contrast signals
+  ═══════════════════════════════════════════════════════ */
+
+  /* 1. Reduced motion: replace spring/slide with opacity
+        cross-fade. Keep subtle timing (not 0ms) so transitions
+        remain legible to users who experience disorientation. */
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
-      animation-duration: 0.01ms !important;
-      transition-duration: 0.01ms !important;
+      animation-duration:        0.01ms !important;
+      transition-duration:       0.01ms !important;
+      animation-iteration-count: 1      !important;
+    }
+    .animate-mini-in,
+    .animate-fadeIn,
+    .animate-slide-up {
+      animation: fadeIn 160ms ease forwards !important;
+    }
+    /* No scale/blur travel — cross-fade the material and scrim only. */
+    .animate-modal-in,
+    .animate-scrim-in {
+      animation: scrimIn 160ms ease forwards !important;
+    }
+    .interactive:active {
+      transform: none;
+      opacity: 0.70;
+    }
+  }
+
+  /* 2. Reduced transparency: solidify all glass surfaces.
+        iOS "Reduce Transparency" replaces blur with solid fills. */
+  @media (prefers-reduced-transparency: reduce) {
+    .glass-ultra-thin,
+    .glass-thin,
+    .glass-regular,
+    .glass-thick,
+    .glass-chrome {
+      -webkit-backdrop-filter: none !important;
+      backdrop-filter:         none !important;
+    }
+    .glass-ultra-thin { background: var(--ios-bg-2) !important; }
+    .glass-thin       { background: var(--ios-bg-2) !important; }
+    .glass-regular    { background: var(--ios-bg-2) !important; }
+    .glass-thick      { background: var(--ios-bg-3) !important; }
+    .glass-chrome     { background: var(--ios-bg)   !important; border-bottom: 0.5px solid var(--ios-separator-opaque) !important; }
+  }
+
+  /* 3. Increased contrast: iOS "Increase Contrast" mode.
+        Raises separator opacity, boosts secondary label.    */
+  @media (prefers-contrast: more) {
+    :root {
+      --ios-label-2:   rgba(235,235,245,0.80);  /* was 0.60 */
+      --ios-label-3:   rgba(235,235,245,0.50);  /* was 0.30 */
+      --ios-separator: rgba(84,84,88,0.90);     /* was 0.60 */
+      --border:        var(--ios-separator-opaque);
     }
   }
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Play } from "lucide-react";
+import { LayoutGroup, MotionConfig, motion } from "motion/react";
 import type { XyzVideo } from "@/lib/xyz";
 import { SECTIONS } from "@/lib/content/sections";
 
@@ -49,8 +50,8 @@ function EqualizerMark() {
 }
 
 /**
- * Filter tabs: text with an accent underline. The row scrolls sideways when it overflows: by
- * mouse wheel, by the edge arrows, or by touch; the selected tab is kept in view.
+ * Filter tabs: the active pill slides between options. The row scrolls sideways when it overflows
+ * by mouse wheel, edge arrows, or touch; the selected tab is kept in view.
  */
 export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip: string) => void }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -86,7 +87,7 @@ export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip:
 
   useEffect(() => {
     scrollerRef.current
-      ?.querySelector<HTMLElement>('[aria-selected="true"]')
+      ?.querySelector<HTMLElement>('[aria-pressed="true"]')
       ?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
   }, [active]);
 
@@ -96,33 +97,46 @@ export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip:
   };
 
   return (
-    <div className="relative border-b border-border">
-      <div
-        ref={scrollerRef}
-        role="group"
-        aria-label="Filter videos"
-        onScroll={updateEdges}
-        className="flex gap-5 overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {SECTIONS.map(({ id, label }) => {
-          const selected = active === id;
-          return (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => onSelect(id)}
-              className={`-mb-px shrink-0 border-b-2 pb-2.5 pt-1 text-sm font-medium transition-colors cursor-pointer ${
-                selected
-                  ? "border-brand text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
+    <div className="relative">
+      <MotionConfig reducedMotion="user">
+        <LayoutGroup id="discover-filters">
+          <div
+            ref={scrollerRef}
+            role="group"
+            aria-label="Filter videos"
+            onScroll={updateEdges}
+            className="flex gap-2 overflow-x-auto scroll-smooth py-[var(--space-2)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            {SECTIONS.map(({ id, label }) => {
+              const selected = active === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => onSelect(id)}
+                  className={`interactive tap-compact relative isolate shrink-0 cursor-pointer rounded-full border px-[1.125rem] py-[0.375rem] font-medium transition-colors ${
+                    selected
+                      ? "border-transparent text-[var(--ios-bg)]"
+                      : "border-[var(--ios-separator)] text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-label)]"
+                  }`}
+                  style={{ fontSize: "var(--text-footnote)", letterSpacing: "var(--tracking-footnote)" }}
+                >
+                  {selected && (
+                    <motion.span
+                      layoutId="active-filter"
+                      aria-hidden="true"
+                      className="absolute inset-0 rounded-full bg-[var(--ios-label)]"
+                      transition={{ type: "spring", bounce: 0, duration: 0.35 }}
+                    />
+                  )}
+                  <span className="relative z-10">{label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </LayoutGroup>
+      </MotionConfig>
 
       {edges.left && (
         <div className="pointer-events-none absolute inset-y-0 left-0 flex w-14 items-center bg-gradient-to-r from-background via-background/90 to-transparent">
@@ -131,7 +145,7 @@ export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip:
             tabIndex={-1}
             aria-label="Scroll filters left"
             onClick={() => scrollBy(-1)}
-            className="pointer-events-auto -mt-1 flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer"
+            className="pointer-events-auto tap-compact flex size-7 items-center justify-center rounded-full glass-regular text-[var(--ios-label-2)] hover:text-[var(--ios-label)] cursor-pointer"
           >
             <ChevronLeft className="size-4" />
           </button>
@@ -144,7 +158,7 @@ export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip:
             tabIndex={-1}
             aria-label="Scroll filters right"
             onClick={() => scrollBy(1)}
-            className="pointer-events-auto -mt-1 flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer"
+            className="pointer-events-auto tap-compact flex size-7 items-center justify-center rounded-full glass-regular text-[var(--ios-label-2)] hover:text-[var(--ios-label)] cursor-pointer"
           >
             <ChevronRight className="size-4" />
           </button>
@@ -193,7 +207,7 @@ export function UpNextList({
   }
 
   if (videos.length === 0) {
-    return <p className="py-8 text-center text-sm text-muted-foreground">Nothing here yet. Pick another filter.</p>;
+    return <p className="py-8 text-center text-subhead text-[var(--ios-label-2)]">Nothing here yet. Pick another filter.</p>;
   }
 
   return (
@@ -206,11 +220,13 @@ export function UpNextList({
               type="button"
               onClick={() => onSelect(video)}
               aria-current={active ? "true" : undefined}
-              className={`group flex w-full items-center gap-3 rounded-xl p-2 text-left transition-colors cursor-pointer ${
-                active ? "bg-brand/10" : "hover:bg-secondary"
+      className={`interactive group flex w-full items-center gap-3 rounded-[var(--radius-md)] p-2 text-left transition-colors cursor-pointer ${
+                active
+                  ? "bg-[rgba(10,132,255,0.12)]"
+                  : "hover:bg-[var(--ios-fill-4)]"
               }`}
             >
-              <span className="flex w-5 shrink-0 justify-center font-display text-sm font-semibold tabular-nums text-muted-foreground">
+              <span className="flex w-5 shrink-0 justify-center font-display text-footnote font-semibold tabular-nums text-[var(--ios-label-3)]">
                 {active ? <EqualizerMark /> : idx + 1}
               </span>
               <span className="relative aspect-[16/10] w-24 shrink-0 overflow-hidden rounded-lg bg-muted">
@@ -225,11 +241,19 @@ export function UpNextList({
               </span>
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span
-                  className={`line-clamp-2 text-sm font-medium leading-5 ${active ? "text-brand" : "text-foreground"}`}
+                  className={`line-clamp-2 font-medium leading-[1.3] ${active ? "" : ""}`}
+                  style={{
+                    fontSize: "var(--text-callout)",
+                    color: active ? "var(--ios-blue)" : "var(--ios-label)",
+                    letterSpacing: "var(--tracking-callout)",
+                  }}
                 >
                   {video.title}
                 </span>
-                <span className="truncate text-xs text-muted-foreground">
+                <span
+                  className="truncate"
+                  style={{ fontSize: "var(--text-caption-1)", color: "var(--ios-label-2)", letterSpacing: "var(--tracking-caption)" }}
+                >
                   {isLive(video)
                     ? "Live"
                     : (hasDuration(video) ? [video.duration, video.views] : [video.views, video.uploadedAt])
@@ -247,7 +271,7 @@ export function UpNextList({
             type="button"
             onClick={onLoadMore}
             disabled={loadingMore}
-            className="flex h-10 w-full items-center justify-center gap-2 rounded-full border border-border text-sm font-medium text-muted-foreground transition-colors hover:border-brand/60 hover:text-foreground disabled:opacity-60 cursor-pointer"
+            className="interactive flex h-[var(--space-tap)] w-full items-center justify-center gap-[var(--space-2)] rounded-full border border-[var(--ios-separator)] text-callout font-medium text-[var(--ios-label-2)] transition-colors hover:border-brand/60 hover:text-foreground disabled:opacity-60 cursor-pointer"
           >
             {loadingMore && (
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-brand" />
@@ -277,9 +301,9 @@ export function VideoCard({
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      className="group flex h-full w-full flex-col gap-3 text-left cursor-pointer focus-visible:rounded-2xl"
+      className="group flex h-full w-full flex-col gap-3 text-left cursor-pointer focus-visible:rounded-[var(--radius-lg)]"
     >
-      <span className={`relative block aspect-video w-full overflow-hidden rounded-xl bg-muted transition-shadow ${selected ? "ring-2 ring-brand" : "ring-1 ring-border group-hover:ring-2 group-hover:ring-brand/80 group-focus-visible:ring-2 group-focus-visible:ring-brand"}`}>
+      <span className={`interactive relative block aspect-video w-full overflow-hidden rounded-[var(--radius-lg)] bg-muted transition-shadow ${selected ? "ring-2 ring-brand" : "ring-1 ring-border group-hover:ring-2 group-hover:ring-brand/80 group-focus-visible:ring-2 group-focus-visible:ring-brand"}`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={video.thumbnailUrl || `/api/xyz/thumb/${video.id}`}
@@ -298,12 +322,12 @@ export function VideoCard({
         <DurationPill video={video} className="absolute left-2.5 top-2.5" />
       </span>
       <span className="flex min-w-0 flex-col gap-1 px-0.5">
-        <span className="line-clamp-2 font-display font-semibold leading-snug text-foreground text-base">
+        <span className="line-clamp-2 font-display font-semibold leading-snug text-foreground text-callout tracking-[var(--tracking-callout)]">
           {video.title}
         </span>
-        <span className="text-xs text-muted-foreground">{metaLine(video)}</span>
+        <span className="text-footnote text-[var(--ios-label-2)]">{metaLine(video)}</span>
         {featured && video.description && (
-          <span className="line-clamp-2 text-sm leading-6 text-muted-foreground">
+          <span className="line-clamp-2 text-subhead leading-relaxed tracking-[var(--tracking-subhead)] text-[var(--ios-label-2)]">
             {video.description}
           </span>
         )}
@@ -331,13 +355,13 @@ export function SearchResults({
   onRetry: () => void;
 }) {
   return (
-    <section aria-labelledby="search-heading" className="mx-auto w-full max-w-[1400px] px-4 pb-16 pt-6 sm:px-6">
+    <section aria-labelledby="search-heading" className="mx-auto w-full max-w-[1400px] px-4 pb-[calc(var(--mini-clear,0px)+var(--space-5)+var(--space-4))] pt-6 sm:px-6">
       <div className="mb-6 flex items-baseline gap-3">
-        <h1 id="search-heading" className="min-w-0 truncate font-display text-2xl font-semibold tracking-tight sm:text-3xl">
+        <h1 id="search-heading" className="min-w-0 truncate font-display text-title-1 font-bold tracking-[var(--tracking-title-1)]">
           {query}
         </h1>
         {!loading && videos.length > 0 && (
-          <span className="shrink-0 text-sm text-muted-foreground">{videos.length} videos</span>
+          <span className="shrink-0 text-subhead text-[var(--ios-label-2)]">{videos.length} videos</span>
         )}
       </div>
 
@@ -345,7 +369,7 @@ export function SearchResults({
         <div className="grid grid-cols-1 gap-x-5 gap-y-8 sm:grid-cols-2 lg:grid-cols-4" aria-busy="true">
           {Array.from({ length: 9 }).map((_, i) => (
             <div key={i} className={`flex flex-col gap-3 ${i === 0 ? "sm:col-span-2 lg:row-span-2" : ""}`}>
-              <div className="aspect-video w-full animate-pulse rounded-2xl bg-muted" />
+              <div className="aspect-video w-full animate-pulse rounded-[var(--radius-lg)] bg-muted" />
               <div className="h-4 w-3/4 animate-pulse rounded bg-muted" />
               <div className="h-3 w-1/3 animate-pulse rounded bg-muted" />
             </div>
@@ -357,7 +381,7 @@ export function SearchResults({
           <button
             type="button"
             onClick={onRetry}
-            className="rounded-full border border-border px-5 py-2 text-sm font-medium text-foreground transition-colors hover:border-brand/70 hover:bg-secondary"
+            className="interactive rounded-full border border-[var(--ios-separator)] px-[var(--space-5)] py-[var(--space-2)] text-callout font-medium text-foreground transition-colors hover:border-brand/70 hover:bg-secondary cursor-pointer"
           >
             Retry search
           </button>
@@ -413,26 +437,28 @@ export function HomeFeed({
   emptyIsError?: boolean;
 }) {
   return (
-    <section aria-labelledby="home-heading" className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-4 pb-20 pt-4 sm:px-6">
+    <section aria-labelledby="home-heading" className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-4 pb-[calc(var(--mini-clear,0px)+var(--space-5)+var(--space-4))] pt-4 sm:px-6">
       <div className="flex items-center justify-between gap-3 pt-1">
         {sourceLabel ? (
           <span className="rounded-full border border-border bg-muted px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {sourceLabel}
           </span>
         ) : (
-          <span className="text-sm text-muted-foreground">Discover</span>
+          <span className="text-subhead text-[var(--ios-label-2)]">Discover</span>
         )}
       </div>
 
-      <div className="sticky top-14 z-30 -mx-4 bg-background/95 px-4 backdrop-blur sm:-mx-6 sm:px-6">
-        <ChipBar active={activeChip} onSelect={onSelectChip} />
+      <div className="sticky top-[calc(var(--nav-height)+var(--space-3))] z-30 -mx-4 px-4 sm:-mx-6 sm:px-6">
+        <div className="w-fit max-w-full rounded-full glass-regular px-1.5">
+          <ChipBar active={activeChip} onSelect={onSelectChip} />
+        </div>
       </div>
 
       {loading ? (
         <div className="grid grid-cols-1 gap-x-5 gap-y-8 sm:grid-cols-2 lg:grid-cols-4" aria-busy="true">
           {Array.from({ length: 9 }).map((_, i) => (
             <div key={i} className={`flex flex-col gap-3 ${i === 0 ? "sm:col-span-2 lg:row-span-2" : ""}`}>
-              <div className="aspect-video w-full animate-pulse rounded-2xl bg-muted" />
+              <div className="aspect-video w-full animate-pulse rounded-[var(--radius-lg)] bg-muted" />
               <div className="h-4 w-3/4 animate-pulse rounded bg-muted" />
               <div className="h-3 w-1/3 animate-pulse rounded bg-muted" />
             </div>
@@ -440,7 +466,7 @@ export function HomeFeed({
         </div>
       ) : videos.length === 0 ? (
         <div className="py-20 text-center" role={emptyIsError ? "alert" : "status"}>
-          <p className="text-base text-muted-foreground">{emptyMessage ?? "No videos found for this topic. Try another category."}</p>
+          <p className="text-callout text-[var(--ios-label-2)]">{emptyMessage ?? "No videos found for this topic. Try another category."}</p>
         </div>
       ) : (
         <>
@@ -463,7 +489,7 @@ export function HomeFeed({
                 type="button"
                 onClick={onLoadMore}
                 disabled={loadingMore}
-                className="flex h-11 items-center gap-2 rounded-full border border-border px-8 text-sm font-medium text-foreground transition-colors hover:border-brand/70 hover:bg-secondary disabled:opacity-60 cursor-pointer"
+                className="interactive flex h-[var(--space-tap)] items-center gap-[var(--space-2)] rounded-full border border-[var(--ios-separator)] px-[var(--space-6)] text-callout font-medium text-foreground transition-colors hover:border-brand/70 hover:bg-secondary disabled:opacity-60 cursor-pointer"
               >
                 {loadingMore && (
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-brand" />
