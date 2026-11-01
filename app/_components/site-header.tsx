@@ -37,6 +37,7 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
   const [highlight, setHighlight] = useState(-1);
   const [mobileSearch, setMobileSearch] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     const syncHistory = () => {
@@ -194,46 +195,55 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
   return (
     /* iOS navigation bar: glass-chrome material, sticky */
     <header className="glass-chrome sticky top-0 z-40">
-      {/* 44pt controls centred in --nav-height, 16pt horizontal margins */}
-      <div className="flex h-[var(--nav-height)] items-center gap-[var(--space-3)] px-[var(--space-4)]">
-        <button
-          type="button"
-          onClick={onHome}
-          className={`interactive shrink-0 cursor-pointer items-center gap-[var(--space-2)] rounded-[var(--radius-sm)] ${
+      {/* 44pt controls centred in --nav-height, 16pt horizontal margins.
+          Equal 1fr side tracks make the middle track exactly viewport-centred,
+          regardless of how wide the logo and trailing controls are. */}
+      <div className="flex h-[var(--nav-height)] items-center gap-[var(--space-3)] px-[var(--space-4)] sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,640px)_minmax(0,1fr)]">
+        <div
+          className={`flex min-w-0 items-center gap-[var(--space-2)] justify-self-start ${
             mobileSearch ? "hidden sm:flex" : "flex"
           }`}
-          aria-label="xyz home"
         >
-          {/* Axis mark: x, y and z meeting at an origin */}
-          <svg viewBox="0 0 24 24" className="size-6 shrink-0" aria-hidden="true">
-            <path d="M9 15V3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-            <path d="M9 15h12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-            <path d="M9 15l-6 6" className="stroke-brand" strokeWidth="2.2" strokeLinecap="round" />
-            <circle cx="9" cy="15" r="2.2" className="fill-brand" />
-          </svg>
-          <span className="font-display text-title-3 font-bold tracking-[var(--tracking-title-3)]">xyz</span>
-        </button>
-
-        {mobileSearch && (
           <button
             type="button"
-            onClick={() => setMobileSearch(false)}
-            className="interactive flex size-[var(--space-tap)] shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] hover:bg-[var(--ios-fill-3)] sm:hidden"
-            aria-label="Close search"
+            onClick={onHome}
+            className="interactive flex shrink-0 cursor-pointer items-center gap-[var(--space-2)] rounded-[var(--radius-sm)]"
+            aria-label="xyz home"
           >
-            <ArrowLeft className="size-5" />
+            {/* Axis mark: x, y and z meeting at an origin */}
+            <svg viewBox="0 0 24 24" className="size-6 shrink-0" aria-hidden="true">
+              <path d="M9 15V3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+              <path d="M9 15h12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+              <path d="M9 15l-6 6" className="stroke-brand" strokeWidth="2.2" strokeLinecap="round" />
+              <circle cx="9" cy="15" r="2.2" className="fill-brand" />
+            </svg>
+            <span className="font-display text-title-3 font-bold tracking-[var(--tracking-title-3)]">xyz</span>
           </button>
-        )}
+
+          {mobileSearch && (
+            <button
+              type="button"
+              onClick={() => setMobileSearch(false)}
+              className="interactive flex size-[var(--space-tap)] shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] hover:bg-[var(--ios-fill-3)] sm:hidden"
+              aria-label="Close search"
+            >
+              <ArrowLeft className="size-5" />
+            </button>
+          )}
+        </div>
 
         <form
+          ref={formRef}
           role="search"
           onSubmit={(e) => {
             e.preventDefault();
             submit(query);
           }}
-          className={`relative mx-auto w-full max-w-[640px] ${mobileSearch ? "flex" : "hidden sm:flex"}`}
+          className={`relative w-full min-w-0 flex-1 sm:flex-none sm:justify-self-center ${
+            mobileSearch ? "flex" : "hidden sm:flex"
+          }`}
         >
-          <div className="flex h-[var(--space-tap)] flex-1 items-center gap-[var(--space-2)] rounded-full border border-[var(--ios-separator)] bg-[var(--ios-fill-3)] pl-[var(--space-4)] pr-[var(--space-1)] backdrop-blur-sm transition-colors focus-within:border-[var(--ios-blue)]">
+          <div className="flex h-[var(--space-tap)] flex-1 items-center gap-[var(--space-2)] overflow-hidden rounded-full border border-[var(--ios-separator)] bg-[var(--ios-fill-3)] pl-[var(--space-4)] pr-1.5 backdrop-blur-sm transition-colors focus-within:border-[var(--ios-blue)]">
             <Search className="size-4 shrink-0 text-[var(--ios-label-3)]" aria-hidden="true" />
             <input
               ref={inputRef}
@@ -245,7 +255,15 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
                 setHighlight(-1);
               }}
               onFocus={() => setOpen(true)}
-              onBlur={() => setTimeout(() => setOpen(false), 120)}
+              onBlur={(e) => {
+                setTimeout(() => setOpen(false), 120);
+                // Tapping away from the expanded mobile field should put the
+                // nav bar back; the in-field buttons are inside the form, so
+                // they must not trigger this.
+                if (mobileSearch && !formRef.current?.contains(e.relatedTarget as Node | null)) {
+                  setMobileSearch(false);
+                }
+              }}
               onKeyDown={onKeyDown}
               placeholder="Search videos or paste a link"
               aria-label="Search"
@@ -264,7 +282,7 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
                   setSuggestions([]);
                   inputRef.current?.focus();
                 }}
-                className="interactive tap-compact flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-4)]"
+                className="interactive tap-compact flex size-7 !h-7 !w-7 !min-h-0 !min-w-0 shrink-0 cursor-pointer items-center justify-center rounded-full text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-4)]"
                 aria-label="Clear search"
               >
                 <X className="size-3.5" />
@@ -274,7 +292,7 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
               type="submit"
               disabled={!query.trim()}
               aria-label="Submit search"
-              className="interactive tap-compact mr-[0.3125rem] flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[var(--ios-blue)] text-white disabled:cursor-not-allowed disabled:opacity-40"
+              className="interactive tap-compact flex size-8 !h-8 !w-8 !min-h-0 !min-w-0 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[var(--ios-blue)] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Search className="size-4" aria-hidden="true" />
             </button>
@@ -386,7 +404,7 @@ export const SiteHeader = forwardRef<SiteHeaderHandle, SiteHeaderProps>(function
           )}
         </form>
 
-        <div className={`ml-auto items-center gap-1 ${mobileSearch ? "hidden sm:flex" : "flex"}`}>
+        <div className={`ml-auto items-center gap-1 justify-self-end sm:ml-0 ${mobileSearch ? "hidden sm:flex" : "flex"}`}>
           <button
             type="button"
             onClick={() => {

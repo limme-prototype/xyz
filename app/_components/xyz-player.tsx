@@ -1347,7 +1347,10 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
                 />
               </fieldset>
 
-              <div className="flex flex-col gap-[var(--space-2)]">
+              <fieldset className="flex flex-col gap-[var(--space-2)]">
+                <legend className="pb-[var(--space-1)] text-footnote font-semibold uppercase tracking-[0.02em] text-[var(--ios-label-2)]">
+                  Discovery
+                </legend>
                 <label htmlFor="api-key-input" className="text-callout font-medium tracking-[var(--tracking-callout)]">
                   YouTube API key <span className="font-normal text-[var(--ios-label-2)]">(optional)</span>
                 </label>
@@ -1362,9 +1365,9 @@ export function XyzPlayer({ initialVideoId = DEFAULT_VIDEO_ID, initialHasVideoQu
                   className="bg-[var(--ios-fill-3)] font-mono text-callout backdrop-blur-sm"
                 />
                 <p className="text-footnote tracking-[var(--tracking-footnote)] text-[var(--ios-label-2)]">
-                  Used for home discovery, search, and video details.
+                  Powers discovery, search, and video details in either playback mode.
                 </p>
-              </div>
+              </fieldset>
 
               <div className="flex items-center justify-end gap-[var(--space-2)] pt-[var(--space-1)]">
                 <button

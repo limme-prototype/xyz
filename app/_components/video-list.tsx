@@ -97,7 +97,17 @@ export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip:
   };
 
   return (
-    <div className="relative">
+    <div className="flex min-w-0 items-center gap-1">
+      {edges.left && (
+        <button
+          type="button"
+          aria-label="Scroll filters left"
+          onClick={() => scrollBy(-1)}
+          className="interactive tap-compact flex size-8 shrink-0 items-center justify-center rounded-full text-[var(--ios-label-2)] transition-colors hover:bg-white/10 hover:text-[var(--ios-label)] cursor-pointer"
+        >
+          <ChevronLeft className="size-4" />
+        </button>
+      )}
       <MotionConfig reducedMotion="user">
         <LayoutGroup id="discover-filters">
           <div
@@ -105,7 +115,7 @@ export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip:
             role="group"
             aria-label="Filter videos"
             onScroll={updateEdges}
-            className="flex gap-2 overflow-x-auto scroll-smooth py-[var(--space-2)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className="flex min-w-0 flex-1 gap-2 overflow-x-auto scroll-smooth px-1 py-[var(--space-2)] [scroll-padding-inline:0.25rem] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           >
             {SECTIONS.map(({ id, label }) => {
               const selected = active === id;
@@ -115,10 +125,10 @@ export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip:
                   type="button"
                   aria-pressed={selected}
                   onClick={() => onSelect(id)}
-                  className={`interactive tap-compact relative isolate shrink-0 cursor-pointer rounded-full border px-[1.125rem] py-[0.375rem] font-medium transition-colors ${
+                  className={`interactive tap-compact relative isolate shrink-0 cursor-pointer rounded-full px-[1.125rem] py-[0.375rem] font-medium transition-colors ${
                     selected
-                      ? "border-transparent text-[var(--ios-bg)]"
-                      : "border-[var(--ios-separator)] text-[var(--ios-label-2)] hover:bg-[var(--ios-fill-4)] hover:text-[var(--ios-label)]"
+                      ? "text-[var(--ios-bg)]"
+                      : "text-[var(--ios-label-2)] hover:bg-white/10 hover:text-[var(--ios-label)]"
                   }`}
                   style={{ fontSize: "var(--text-footnote)", letterSpacing: "var(--tracking-footnote)" }}
                 >
@@ -127,6 +137,7 @@ export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip:
                       layoutId="active-filter"
                       aria-hidden="true"
                       className="absolute inset-0 rounded-full bg-[var(--ios-label)]"
+                      style={{ borderRadius: 9999 }}
                       transition={{ type: "spring", bounce: 0, duration: 0.35 }}
                     />
                   )}
@@ -138,31 +149,15 @@ export function ChipBar({ active, onSelect }: { active: string; onSelect: (chip:
         </LayoutGroup>
       </MotionConfig>
 
-      {edges.left && (
-        <div className="pointer-events-none absolute inset-y-0 left-0 flex w-14 items-center bg-gradient-to-r from-background via-background/90 to-transparent">
-          <button
-            type="button"
-            tabIndex={-1}
-            aria-label="Scroll filters left"
-            onClick={() => scrollBy(-1)}
-            className="pointer-events-auto tap-compact flex size-7 items-center justify-center rounded-full glass-regular text-[var(--ios-label-2)] hover:text-[var(--ios-label)] cursor-pointer"
-          >
-            <ChevronLeft className="size-4" />
-          </button>
-        </div>
-      )}
       {edges.right && (
-        <div className="pointer-events-none absolute inset-y-0 right-0 flex w-14 items-center justify-end bg-gradient-to-l from-background via-background/90 to-transparent">
-          <button
-            type="button"
-            tabIndex={-1}
-            aria-label="Scroll filters right"
-            onClick={() => scrollBy(1)}
-            className="pointer-events-auto tap-compact flex size-7 items-center justify-center rounded-full glass-regular text-[var(--ios-label-2)] hover:text-[var(--ios-label)] cursor-pointer"
-          >
-            <ChevronRight className="size-4" />
-          </button>
-        </div>
+        <button
+          type="button"
+          aria-label="Scroll filters right"
+          onClick={() => scrollBy(1)}
+          className="interactive tap-compact flex size-8 shrink-0 items-center justify-center rounded-full text-[var(--ios-label-2)] transition-colors hover:bg-white/10 hover:text-[var(--ios-label)] cursor-pointer"
+        >
+          <ChevronRight className="size-4" />
+        </button>
       )}
     </div>
   );
@@ -322,7 +317,13 @@ export function VideoCard({
         <DurationPill video={video} className="absolute left-2.5 top-2.5" />
       </span>
       <span className="flex min-w-0 flex-col gap-1 px-0.5">
-        <span className="line-clamp-2 font-display font-semibold leading-snug text-foreground text-callout tracking-[var(--tracking-callout)]">
+        <span
+          className={`line-clamp-2 font-display font-semibold leading-snug text-foreground ${
+            featured
+              ? "text-title-2 sm:text-title-1 tracking-[var(--tracking-title-2)] sm:tracking-[var(--tracking-title-1)]"
+              : "text-callout tracking-[var(--tracking-callout)]"
+          }`}
+        >
           {video.title}
         </span>
         <span className="text-footnote text-[var(--ios-label-2)]">{metaLine(video)}</span>
@@ -449,7 +450,7 @@ export function HomeFeed({
       </div>
 
       <div className="sticky top-[calc(var(--nav-height)+var(--space-3))] z-30 -mx-4 px-4 sm:-mx-6 sm:px-6">
-        <div className="w-fit max-w-full rounded-full glass-regular px-1.5">
+        <div className="w-fit max-w-full rounded-full glass-regular px-1 shadow-[0_6px_20px_rgba(0,0,0,0.24)]">
           <ChipBar active={activeChip} onSelect={onSelectChip} />
         </div>
       </div>
@@ -472,10 +473,13 @@ export function HomeFeed({
         <>
           <ul className="grid grid-cols-1 gap-x-5 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
             {videos.map((video, idx) => (
-              <li key={`${video.id}-${idx}`}>
+              <li
+                key={`${video.id}-${idx}`}
+                className={idx === 0 ? "sm:col-span-2 lg:row-span-2" : ""}
+              >
                 <VideoCard
                   video={video}
-                  featured={false}
+                  featured={idx === 0}
                   selected={video.id === activeVideoId}
                   onSelect={() => onSelectVideo(video)}
                 />
